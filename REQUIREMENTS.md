@@ -104,6 +104,8 @@ All entities live in one SQLite database per project. A separate SQLite database
 - **Custom user-defined properties (UDPs):** typed (text, number, value-with-unit, enum list), definable by the user, attachable to parts, devices, connections, cables. Example: `CableEndType` enum, `StrippingLength` value-with-unit
 - **Import:** parts data import from EPLAN parts export files (CSV and/or XML). No drawing/project import.
 
+> **Decision recorded:** see `DECISIONS.md`, ADR-003 — the primary import source is EPLAN's native `.edz` parts export (per-part XML, far richer than plain CSV/XML), based on inspection of a real H2L Robotics export. CSV/XML remains a secondary/fallback import path.
+
 ### 5.8 Symbol
 - SVG-based geometry + metadata: connection points (position, direction, pin mapping), text placeholders (tag, cross-refs, technical data), variants (rotations/mirrors)
 - Library shipped with standard IEC-style symbols; user can import SVG and duplicate+edit existing symbols

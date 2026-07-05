@@ -33,3 +33,51 @@ C#/.NET 8, WPF, SkiaSharp (2D canvas rendering), Svg.Skia (SVG symbol parsing/re
 - Report/form layouts are QuestPDF-native; the "declarative JSON layout" from Section 5.9 will be a schema *we* define that a rendering layer maps onto QuestPDF's fluent API, not a pre-existing template format.
 
 ---
+
+## ADR-002: Data Access — Dapper + Plain SQL File Migrations
+
+**Status:** Accepted (2026-07-05)
+
+**Context:**
+M1 needs a way to (a) version and apply schema changes to the two SQLite databases (Project DB, Library DB) and (b) map query results onto the domain models in `Ecad.Core` without excessive hand-written `IDataReader` boilerplate.
+
+**Decision:**
+- Migrations: plain numbered `.sql` files embedded as resources under `Ecad.Data/Migrations/{Project|Library}/000N_name.sql`, applied in order by `MigrationRunner`, tracked in a `schema_migrations(version, applied_at_utc)` table per database. No EF Core migrations.
+- Data access: Dapper on top of `Microsoft.Data.Sqlite`, one repository class per aggregate in `Ecad.Data/Repositories/`.
+
+**Rationale:**
+- Plain SQL migration files are directly readable/diffable and match the "database migrations versioned from v1" NFR (Section 7) without adopting a heavy ORM migration pipeline.
+- Dapper removes the reader-to-object boilerplate that raw ADO.NET requires for every query, while keeping every SQL statement explicit and visible in the repository — no LINQ-to-SQL translation layer to debug.
+
+**Consequences:**
+- Domain models in `Ecad.Core` stay plain POCOs (no persistence attributes); Dapper maps by column-name convention for classes with a parameterless constructor and settable properties.
+- Where a repository needs a `record`-based intermediate row type (to do a value/enum conversion during mapping), its properties must match SQLite's underlying reader types exactly — `long` for INTEGER-affinity columns, `double` for REAL, not `int`/`bool`/`decimal`/enum types. Dapper's constructor-based materialization for `record`s requires an exact type match (unlike its lenient property-setter mapping), and SQLite's `Microsoft.Data.Sqlite` reader always reports INTEGER columns as `Int64` and REAL columns as `double` regardless of the declared column type. Conversion to the "nice" domain type (bool, enum, decimal) happens in that row type's `ToModel()` method. See `PartRepository.PartRow`, `ConnectionRepository.ConnectionEndRow`, `UdpRepository.UdpValueRow`, `ProjectRepository.PageRow` for the pattern.
+
+---
+
+## ADR-003: EPLAN `parts.edz` as Primary Parts-Import Source; Local Part Caching
+
+**Status:** Accepted (2026-07-05)
+
+**Context:**
+The user has an existing EPLAN parts library export (`H2L Robotics/parts.edz`, ~236MB) and wants to migrate it in once, with the ability to re-import periodically, rather than rebuilding a parts database by hand or relying only on the plain CSV/XML import the original requirements doc (Section 5.7) assumed. I inspected a disposable copy of the file (the original on disk was never touched) and found:
+- It's a 7-zip archive of ~2,225 files, not a binary database.
+- `manifest.xml` indexes per-part XML file sets.
+- `items\partxml\*.part.xml` — EPLAN's native "Parts Management" export per article: article number, descriptions, manufacturer/supplier, dimensions, weight, pricing, and `functiontemplate` elements (pin/connection designation, function category/group/id, symbol reference) that map directly onto `PartPinTemplate`.
+- `items\partxml\*.connectionpoints.xml` — precise per-terminal position plus min/max cross-section, torque, and wire-count limits — maps directly onto `PartTerminalSpec` and is exactly what termination/ferrule matching (Section 6.3) needs.
+- `items\partxml\*.accessorylist.xml` / `*.construction.xml` — sub-assembly composition and drilling/mounting data.
+- `items\document\*` (datasheet PDFs) and `items\picture\*` (product photos) — usable as-is.
+- `items\macro\*.ema` / `*_3D.ema` — schematic/3D symbol graphics. Technically well-formed XML (`EplanPxfRoot`), but the content is a serialized dump of EPLAN's internal object model (opaque numeric object/attribute codes, an internal object-reference graph) with no published schema. Evaluated and **rejected** as a symbol source — not practically convertible without a large, fragile reverse-engineering effort.
+
+**Decision:**
+- The EPLAN native XML export (`.edz`, unzipped as 7z) becomes the **primary** parts-import source (built in M3), ahead of plain CSV/XML — it carries far more structured data than a flat export and doesn't need a field-mapping wizard for the fields it does have.
+- The Library DB's `Part` schema (M1) includes `ExternalKey` (the EPLAN article key), `SourceLastModifiedUtc` (from EPLAN's `P_PART_LASTCHANGE_DATE_UTC`), and `SourceImportBatchId`, specifically so a re-import can upsert by `ExternalKey` and use the source timestamp to decide add vs. update vs. skip — see `PartRepository.UpsertByExternalKey`.
+- Symbol graphics are **not** sourced from `.ema` macros. M4 ships a small hand-built SVG symbol set instead, as originally planned.
+- Project DB keeps a local cached copy of any `Part` (identical table schema to the Library DB) that a Device references, so a project file stays portable/self-contained without needing the shared Library DB present — this satisfies the "referenced, with per-project caching/copy" language in Section 5 of the requirements doc.
+
+**Consequences:**
+- M3 (parts import) will parse XML directly (`System.Xml`), not CSV — the CSV/XML wizard from Section 6.6 becomes a secondary/fallback import path rather than the primary one.
+- Panel-layout-oriented data (`construction.xml` drilling patterns) is out of scope for Phase 1 per the requirements doc (Section 8) and won't be imported even though it's available in the source file.
+- If EPLAN's export format changes in a future version, the XML parser in M3 needs revisiting; the schema itself (Library DB `Part`/`PartPinTemplate`/`PartTerminalSpec`) is source-agnostic and shouldn't need to change.
+
+---
