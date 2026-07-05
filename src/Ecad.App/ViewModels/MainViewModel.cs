@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using Ecad.App.Views;
 using Ecad.Core.Models;
 using Ecad.Data;
+using Ecad.Data.Import;
 using Microsoft.Win32;
 
 namespace Ecad.App.ViewModels;
@@ -28,6 +29,10 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(CloseProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     private bool _isProjectOpen;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ImportEplanPartsCommand))]
+    private bool _isImporting;
 
     public ObservableCollection<Page> Pages { get; } = [];
 
@@ -116,6 +121,41 @@ public partial class MainViewModel : ObservableObject, IDisposable
         });
         Pages.Add(page);
     }
+
+    [RelayCommand(CanExecute = nameof(CanImportEplanParts))]
+    private async Task ImportEplanPartsAsync()
+    {
+        var openDialog = new OpenFileDialog { Filter = "EPLAN Parts Export (*.edz)|*.edz" };
+        if (openDialog.ShowDialog() != true) return;
+
+        IsImporting = true;
+        StatusText = "Importing EPLAN parts...";
+        try
+        {
+            var result = await Task.Run(() =>
+            {
+                using var libraryConnection = LibraryDatabase.Open();
+                return EplanEdzImporter.Import(openDialog.FileName, libraryConnection);
+            });
+
+            StatusText = $"Import complete: {result.PartsAdded} added, {result.PartsUpdated} updated, {result.PartsUnchanged} unchanged.";
+            var message = $"Added: {result.PartsAdded}\nUpdated: {result.PartsUpdated}\nUnchanged: {result.PartsUnchanged}";
+            if (result.Warnings.Count > 0)
+                message += $"\n\nWarnings ({result.Warnings.Count}):\n" + string.Join("\n", result.Warnings.Take(20));
+            MessageBox.Show(message, "EPLAN Import Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            StatusText = "Import failed.";
+            MessageBox.Show(ex.ToString(), "EPLAN Import Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            IsImporting = false;
+        }
+    }
+
+    private bool CanImportEplanParts() => !IsImporting;
 
     [RelayCommand]
     private static void Exit() => Application.Current.Shutdown();

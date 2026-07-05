@@ -81,3 +81,24 @@ The user has an existing EPLAN parts library export (`H2L Robotics/parts.edz`, ~
 - If EPLAN's export format changes in a future version, the XML parser in M3 needs revisiting; the schema itself (Library DB `Part`/`PartPinTemplate`/`PartTerminalSpec`) is source-agnostic and shouldn't need to change.
 
 ---
+
+## ADR-004: SharpCompress for Reading `.edz` (7z) Archives; Real-Data Import Robustness
+
+**Status:** Accepted (2026-07-05)
+
+**Context:**
+M3 needed a way to read the 7-Zip-format `.edz` archive from .NET without external process dependencies (`7z.exe`) that would break the "fully offline, installable" requirement. .NET has no built-in 7z support (`System.IO.Compression` is zip-only).
+
+**Decision:**
+Added **SharpCompress** (pure managed .NET library) and read via its generic `ArchiveFactory.OpenArchive`/`IArchive`/`IArchiveEntry` interfaces rather than the 7z-specific `SevenZipArchive` type. SharpCompress can only *read* 7z (no write support), and a real `.edz` is far too large and proprietary to commit as a test fixture — using the generic interface means `EplanEdzImporter` doesn't care what container format it's reading, so `Ecad.Data.Tests` builds tiny synthetic **`.zip`** fixtures (via `System.IO.Compression`, no SharpCompress writer needed) with the identical internal folder layout, exercising the exact same parsing code the real 7z path uses.
+
+**Consequences — real-data robustness fixes found only by running against the actual H2L Robotics export (not caught by synthetic fixtures):**
+Running the importer against a disposable copy of the real file surfaced three issues no amount of guessing at the schema would have caught:
+1. SharpCompress reports entry keys with **forward slashes**, regardless of `7z l`'s own backslash-style display — `EplanEdzImporter`'s path-building was fixed to match.
+2. The real export has **duplicate keys** at both the archive level (e.g. two identical `teejet.manufacturer.xml` entries) and within a single part's manifest `<items>` block (e.g. duplicate `groupsymbolmacro` entries) — dictionary construction now uses group-by-first-wins instead of a plain `ToDictionary`, which threw on the first duplicate.
+3. Some real `<terminalPosition>` elements have no `name` attribute, which used to silently become a C# `null` (LINQ to XML's explicit string conversion doesn't throw on a missing attribute) and only surfaced as a SQLite `NOT NULL` constraint violation at insert time — now falls back to `#{pos}`.
+4. Per-part processing is now wrapped in a try/catch that records a warning and continues, rather than letting one malformed package abort the entire import and silently drop every part after it in the manifest.
+
+A full run against the real 236MB/636-part export completed in ~5.7 seconds with 0 warnings after these fixes. All four issues have regression tests in `EplanEdzImporterTests`.
+
+---

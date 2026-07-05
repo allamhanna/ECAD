@@ -22,6 +22,16 @@ public class PartRepository(SqliteConnection connection)
             classification);
     }
 
+    /// <summary>Looks up an Organization by ExternalKey, inserting it if missing. Many parts share the same manufacturer.</summary>
+    public long GetOrCreateOrganization(string name, string externalKey)
+    {
+        var existingId = connection.QuerySingleOrDefault<long?>(
+            "SELECT Id FROM Organization WHERE ExternalKey = @externalKey;", new { externalKey });
+        if (existingId is not null) return existingId.Value;
+
+        return InsertOrganization(new Organization { Name = name, ExternalKey = externalKey });
+    }
+
     public Part? GetPart(long id)
     {
         return connection.QuerySingleOrDefault<PartRow>("SELECT * FROM Part WHERE Id = @id;", new { id })?.ToModel();
@@ -135,6 +145,24 @@ public class PartRepository(SqliteConnection connection)
             "SELECT * FROM PartPinTemplate WHERE PartId = @partId ORDER BY Pos;", new { partId }).ToList();
     }
 
+    /// <summary>Deletes all existing pin templates for the part and inserts the given set, in one transaction — used on re-import so rows aren't duplicated.</summary>
+    public void ReplacePartPinTemplates(long partId, IReadOnlyList<PartPinTemplate> templates)
+    {
+        using var transaction = connection.BeginTransaction();
+        connection.Execute("DELETE FROM PartPinTemplate WHERE PartId = @partId;", new { partId }, transaction);
+        foreach (var template in templates)
+        {
+            template.PartId = partId;
+            connection.Execute(
+                """
+                INSERT INTO PartPinTemplate (PartId, Pos, ConnectionDesignation, FunctionDefCategory, FunctionDefGroup, FunctionDefId, SymbolRef)
+                VALUES (@PartId, @Pos, @ConnectionDesignation, @FunctionDefCategory, @FunctionDefGroup, @FunctionDefId, @SymbolRef);
+                """,
+                template, transaction);
+        }
+        transaction.Commit();
+    }
+
     public long InsertPartTerminalSpec(PartTerminalSpec spec)
     {
         return connection.ExecuteScalar<long>(
@@ -150,6 +178,45 @@ public class PartRepository(SqliteConnection connection)
     {
         return connection.Query<PartTerminalSpec>(
             "SELECT * FROM PartTerminalSpec WHERE PartId = @partId ORDER BY Pos;", new { partId }).ToList();
+    }
+
+    /// <summary>Deletes all existing terminal specs for the part and inserts the given set, in one transaction — used on re-import so rows aren't duplicated.</summary>
+    public void ReplacePartTerminalSpecs(long partId, IReadOnlyList<PartTerminalSpec> specs)
+    {
+        using var transaction = connection.BeginTransaction();
+        connection.Execute("DELETE FROM PartTerminalSpec WHERE PartId = @partId;", new { partId }, transaction);
+        foreach (var spec in specs)
+        {
+            spec.PartId = partId;
+            connection.Execute(
+                """
+                INSERT INTO PartTerminalSpec (PartId, Name, Pos, MinCrossSectionMm2, MaxCrossSectionMm2, MinTorqueNm, MaxTorqueNm, MaxWireCount, X, Y, Z)
+                VALUES (@PartId, @Name, @Pos, @MinCrossSectionMm2, @MaxCrossSectionMm2, @MinTorqueNm, @MaxTorqueNm, @MaxWireCount, @X, @Y, @Z);
+                """,
+                spec, transaction);
+        }
+        transaction.Commit();
+    }
+
+    public IReadOnlyList<PartAccessory> GetPartAccessories(long partId)
+    {
+        return connection.Query<PartAccessory>(
+            "SELECT * FROM PartAccessory WHERE PartId = @partId ORDER BY Pos;", new { partId }).ToList();
+    }
+
+    /// <summary>Deletes all existing accessory rows for the part and inserts the given set, in one transaction — used on re-import so rows aren't duplicated.</summary>
+    public void ReplacePartAccessories(long partId, IReadOnlyList<PartAccessory> accessories)
+    {
+        using var transaction = connection.BeginTransaction();
+        connection.Execute("DELETE FROM PartAccessory WHERE PartId = @partId;", new { partId }, transaction);
+        foreach (var accessory in accessories)
+        {
+            accessory.PartId = partId;
+            connection.Execute(
+                "INSERT INTO PartAccessory (PartId, AccessoryPartExternalKey, Pos) VALUES (@PartId, @AccessoryPartExternalKey, @Pos);",
+                accessory, transaction);
+        }
+        transaction.Commit();
     }
 
     public long InsertImportBatch(ImportBatch batch)
@@ -169,6 +236,13 @@ public class PartRepository(SqliteConnection connection)
                 batch.PartsUpdated,
                 batch.PartsUnchanged,
             });
+    }
+
+    public void UpdateImportBatchCounts(long importBatchId, int partsAdded, int partsUpdated, int partsUnchanged)
+    {
+        connection.Execute(
+            "UPDATE ImportBatch SET PartsAdded = @partsAdded, PartsUpdated = @partsUpdated, PartsUnchanged = @partsUnchanged WHERE Id = @importBatchId;",
+            new { importBatchId, partsAdded, partsUpdated, partsUnchanged });
     }
 
     // Note: fields matching SQLite's underlying storage types (long for INTEGER, double for REAL) —

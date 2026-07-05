@@ -2,7 +2,7 @@
 
 This file describes the actual folder/solution layout as it exists, kept in sync as the project is built. See `DECISIONS.md` ADR-001 for the stack rationale and `PROGRESS.md` for what's built vs planned.
 
-## Current layout (as of M2 complete)
+## Current layout (as of M3 complete)
 
 ```
 electrical CAD/
@@ -16,7 +16,8 @@ electrical CAD/
     Ecad.App/              WPF startup project (net8.0-windows)
       App.xaml.cs           global DispatcherUnhandledException handler (shows a message box)
       ViewModels/           MainViewModel (CommunityToolkit.Mvvm ObservableObject + RelayCommands:
-                             NewProject, OpenProject, Save, SaveAs, CloseProject, AddPage, Exit)
+                             NewProject, OpenProject, Save, SaveAs, CloseProject, AddPage,
+                             ImportEplanPartsAsync, Exit)
       Views/                NewProjectDialog, AddPageDialog — plain code-behind modal dialogs
       MainWindow.xaml(.cs)  File menu, page ListView (Function/Location/DocType/PageNumber/Type columns),
                              status bar; DataContext = MainViewModel
@@ -39,14 +40,19 @@ electrical CAD/
                              Dispose — the testable core behind Ecad.App's MainViewModel
       Repositories/         ProjectRepository (+ GetFirstProject, GetPages), DeviceRepository,
                              PlacementRepository (+ cross-reference query), ConnectionRepository,
-                             CableRepository, PartRepository (+ upsert-by-ExternalKey), UdpRepository
+                             CableRepository, PartRepository (+ upsert-by-ExternalKey, Replace*
+                             child-row helpers, GetOrCreateOrganization), UdpRepository
                              — Dapper on top of Microsoft.Data.Sqlite
+      Import/EplanEdzImporter.cs   parses a real EPLAN .edz (7z, read via SharpCompress) into the
+                             Library DB — see ADR-004 for format quirks this handles
+      Import/EplanImportResult.cs  counts + warnings returned to the caller
     Ecad.Rendering/        canvas + SVG symbol rendering (net8.0-windows, UseWPF) — packages added, empty stub
     Ecad.Reports/          report layout + QuestPDF generation (net8.0) — QuestPDF added, empty stub
   tests/
     Ecad.Core.Tests/       DeviceTagTests, PageTagTests (8 tests)
     Ecad.Data.Tests/       MigrationTests, ProjectSchemaTests, PartUpsertTests, ProjectSessionTests,
-                           TempSqliteFile helper (18 tests)
+                           EplanEdzImporterTests (synthetic zip fixtures, see ADR-004),
+                           TempSqliteFile helper (25 tests)
 ```
 
 Note: `Ecad.Rendering` targets `net8.0-windows` with `UseWPF=true` (not plain `net8.0`) because `SkiaSharp.Views.WPF` needs the WPF/Windows target framework to compile.
@@ -55,6 +61,6 @@ Dependency direction: `Ecad.App` depends on `Ecad.Core`, `Ecad.Data`, `Ecad.Rend
 
 Two SQLite databases per ADR-003: a per-project file (Project DB) and a shared `library.db` (Library DB). The `Part`/`PartPinTemplate`/`PartTerminalSpec`/`PartAccessory` tables exist with identical DDL in both — the Project DB's copy is a local cache populated when a Device first references a library Part, so a project file stays portable on its own.
 
-Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 26 tests passing (`dotnet test` on both test projects). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior needs a human click-through.
+Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 33 tests passing (`dotnet test` on both test projects). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings.
 
-This section will be updated with real detail as each milestone lands — next up is M3 (EPLAN parts import) or M5 (schematic canvas), to be decided with the user.
+This section will be updated with real detail as each milestone lands — next up: parts management UI (browse/view what M3 imported) or M5 (schematic canvas), to be decided with the user.
