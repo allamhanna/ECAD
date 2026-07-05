@@ -13,6 +13,7 @@
                 <MenuItem Header="_Open Project..." Command="{Binding OpenProjectCommand}"/>
                 <Separator/>
                 <MenuItem Header="_Save" Command="{Binding SaveCommand}" InputGestureText="Ctrl+S"/>
+                <MenuItem Header="Save _As..." Command="{Binding SaveAsCommand}"/>
                 <MenuItem Header="_Close Project" Command="{Binding CloseProjectCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}"/>

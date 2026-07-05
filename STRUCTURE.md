@@ -14,8 +14,9 @@ electrical CAD/
   EcadApp.sln
   src/
     Ecad.App/              WPF startup project (net8.0-windows)
+      App.xaml.cs           global DispatcherUnhandledException handler (shows a message box)
       ViewModels/           MainViewModel (CommunityToolkit.Mvvm ObservableObject + RelayCommands:
-                             NewProject, OpenProject, Save, CloseProject, AddPage, Exit)
+                             NewProject, OpenProject, Save, SaveAs, CloseProject, AddPage, Exit)
       Views/                NewProjectDialog, AddPageDialog — plain code-behind modal dialogs
       MainWindow.xaml(.cs)  File menu, page ListView (Function/Location/DocType/PageNumber/Type columns),
                              status bar; DataContext = MainViewModel
@@ -34,7 +35,8 @@ electrical CAD/
       ProjectDatabase.cs    opens/creates a project's single-file SQLite db, runs Project migrations
       LibraryDatabase.cs    opens/creates %LOCALAPPDATA%\Ecad\library.db, runs Library migrations
       ProjectSession.cs     Create/Open a .ecad file, holds CurrentProject + Pages, AddPage, Checkpoint
-                             (File > Save), Dispose — the testable core behind Ecad.App's MainViewModel
+                             (File > Save), SaveAs (checkpoint + file copy + reopen on new path),
+                             Dispose — the testable core behind Ecad.App's MainViewModel
       Repositories/         ProjectRepository (+ GetFirstProject, GetPages), DeviceRepository,
                              PlacementRepository (+ cross-reference query), ConnectionRepository,
                              CableRepository, PartRepository (+ upsert-by-ExternalKey), UdpRepository
@@ -44,7 +46,7 @@ electrical CAD/
   tests/
     Ecad.Core.Tests/       DeviceTagTests, PageTagTests (8 tests)
     Ecad.Data.Tests/       MigrationTests, ProjectSchemaTests, PartUpsertTests, ProjectSessionTests,
-                           TempSqliteFile helper (16 tests)
+                           TempSqliteFile helper (18 tests)
 ```
 
 Note: `Ecad.Rendering` targets `net8.0-windows` with `UseWPF=true` (not plain `net8.0`) because `SkiaSharp.Views.WPF` needs the WPF/Windows target framework to compile.
@@ -53,6 +55,6 @@ Dependency direction: `Ecad.App` depends on `Ecad.Core`, `Ecad.Data`, `Ecad.Rend
 
 Two SQLite databases per ADR-003: a per-project file (Project DB) and a shared `library.db` (Library DB). The `Part`/`PartPinTemplate`/`PartTerminalSpec`/`PartAccessory` tables exist with identical DDL in both — the Project DB's copy is a local cache populated when a Device first references a library Part, so a project file stays portable on its own.
 
-Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 24 tests passing (`dotnet test` on both test projects). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior needs a human click-through.
+Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 26 tests passing (`dotnet test` on both test projects). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior needs a human click-through.
 
 This section will be updated with real detail as each milestone lands — next up is M3 (EPLAN parts import) or M5 (schematic canvas), to be decided with the user.

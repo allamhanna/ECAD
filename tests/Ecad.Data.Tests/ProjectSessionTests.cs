@@ -56,4 +56,38 @@ public class ProjectSessionTests
 
         Assert.Throws<InvalidOperationException>(() => ProjectSession.Open(file.Path));
     }
+
+    [Fact]
+    public void SaveAs_CopiesDataAndFurtherEditsGoToTheNewFileOnly()
+    {
+        using var original = new TempSqliteFile();
+        using var copy = new TempSqliteFile();
+
+        var session = ProjectSession.Create(original.Path, new Project { Name = "Test Machine", CreatedAtUtc = DateTimeOffset.UtcNow });
+        session.AddPage(new Page { FunctionSegment = "K1", PageNumberSegment = "5", PageType = PageType.Schematic });
+
+        session = session.SaveAs(copy.Path);
+        Assert.Equal(copy.Path, session.FilePath);
+        Assert.Single(session.Pages);
+
+        session.AddPage(new Page { FunctionSegment = "K2", PageNumberSegment = "6", PageType = PageType.Schematic });
+        session.Dispose();
+
+        using var reopenedCopy = ProjectSession.Open(copy.Path);
+        Assert.Equal(2, reopenedCopy.Pages.Count);
+
+        using var reopenedOriginal = ProjectSession.Open(original.Path);
+        Assert.Single(reopenedOriginal.Pages); // the post-SaveAs page must not have leaked back into the original file
+    }
+
+    [Fact]
+    public void SaveAs_SamePath_IsANoOpCheckpointNotACopy()
+    {
+        using var file = new TempSqliteFile();
+        using var session = ProjectSession.Create(file.Path, new Project { Name = "Test Machine", CreatedAtUtc = DateTimeOffset.UtcNow });
+
+        var result = session.SaveAs(file.Path);
+
+        Assert.Same(session, result);
+    }
 }

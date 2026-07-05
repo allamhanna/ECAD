@@ -73,5 +73,25 @@ public sealed class ProjectSession : IDisposable
         command.ExecuteNonQuery();
     }
 
+    /// <summary>
+    /// Copies the current project file to a new path and returns a session backed by that new
+    /// file. This session's connection is disposed as part of the switch — the caller should
+    /// replace its reference with the returned session and not use this instance afterward.
+    /// </summary>
+    public ProjectSession SaveAs(string newFilePath)
+    {
+        if (string.Equals(Path.GetFullPath(newFilePath), Path.GetFullPath(FilePath), StringComparison.OrdinalIgnoreCase))
+        {
+            Checkpoint();
+            return this;
+        }
+
+        Checkpoint();
+        _connection.Dispose();
+        SqliteConnection.ClearAllPools();
+        File.Copy(FilePath, newFilePath, overwrite: true);
+        return Open(newFilePath);
+    }
+
     public void Dispose() => _connection.Dispose();
 }

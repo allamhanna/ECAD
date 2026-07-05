@@ -71,6 +71,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void SaveAs()
+    {
+        var saveDialog = new SaveFileDialog
+        {
+            Filter = "ECAD Project (*.ecad)|*.ecad",
+            DefaultExt = ".ecad",
+            FileName = _session!.CurrentProject.Name,
+        };
+        if (saveDialog.ShowDialog() != true) return;
+
+        _session = _session.SaveAs(saveDialog.FileName);
+        StatusText = $"Saved as {saveDialog.FileName}";
+    }
+
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
     private void CloseProject()
     {
         CloseCurrentSession();
