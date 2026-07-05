@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Ecad.Core\Ecad.Core.csproj" />
+    <ProjectReference Include="..\Ecad.Data\Ecad.Data.csproj" />
+    <ProjectReference Include="..\Ecad.Rendering\Ecad.Rendering.csproj" />
+    <ProjectReference Include="..\Ecad.Reports\Ecad.Reports.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+</Project>

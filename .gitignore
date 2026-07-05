@@ -1,0 +1,22 @@
+# Build outputs
+bin/
+obj/
+out/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# Test results
+TestResults/
+
+# NuGet
+*.nupkg
+packages/
+
+# Local SQLite project files (user data, not source)
+*.db
+*.db-shm
+*.db-wal
