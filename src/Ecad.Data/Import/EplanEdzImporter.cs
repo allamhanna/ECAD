@@ -90,8 +90,17 @@ public static class EplanEdzImporter
                 {
                     case PartUpsertResult.Added: result.PartsAdded++; break;
                     case PartUpsertResult.Updated: result.PartsUpdated++; break;
-                    default: result.PartsUnchanged++; continue; // unchanged: leave child rows as they are
+                    default: result.PartsUnchanged++; break;
                 }
+
+                // Image backfill runs regardless of upsert result: parts imported before this
+                // feature existed are "Unchanged" on re-import (their source timestamp hasn't
+                // moved) and would otherwise never get an image. UpsertImage is idempotent, so
+                // running it every time a picturefile item exists is cheap and safe.
+                if (items.TryGetValue("picturefile", out var pictureItem))
+                    BackfillImage(pictureItem, entriesByPath, parts, part.Id, packageKey, result);
+
+                if (upsertResult == PartUpsertResult.Unchanged) continue; // leave child rows as they are
 
                 parts.ReplacePartPinTemplates(part.Id, pinTemplates);
                 parts.ReplacePartAccessories(part.Id, accessories);
@@ -143,6 +152,39 @@ public static class EplanEdzImporter
         var longName = (string?)address.Attribute("P_PART_ADDRESS_LONGNAME") ?? shortName;
         return parts.GetOrCreateOrganization(longName, shortName);
     }
+
+    private static void BackfillImage(XElement pictureItem, Dictionary<string, IArchiveEntry> entriesByPath,
+        PartRepository parts, long partId, string packageKey, EplanImportResult result)
+    {
+        var path = ArchivePath(pictureItem);
+        if (!entriesByPath.TryGetValue(path, out var entry))
+        {
+            result.Warnings.Add($"'{path}' referenced by manifest but missing from archive — image skipped for '{packageKey}'.");
+            return;
+        }
+
+        if (parts.GetImage(partId) is not null) return; // already cached — UpsertImage is cheap, but no need to re-read the entry
+
+        try
+        {
+            using var stream = entry.OpenEntryStream();
+            using var buffer = new MemoryStream();
+            stream.CopyTo(buffer);
+            parts.UpsertImage(partId, ContentTypeFromExtension(path), buffer.ToArray());
+        }
+        catch (Exception ex)
+        {
+            result.Warnings.Add($"Failed to read image '{path}' for '{packageKey}': {ex.Message}");
+        }
+    }
+
+    private static string ContentTypeFromExtension(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".png" => "image/png",
+        ".gif" => "image/gif",
+        ".bmp" => "image/bmp",
+        _ => "image/jpeg", // .jpg/.jpeg and unrecognized extensions — the real export is overwhelmingly JPEG
+    };
 
     private static (Part part, List<PartPinTemplate> pinTemplates, List<PartAccessory> accessories) ParsePart(XDocument xml)
     {

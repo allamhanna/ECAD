@@ -102,3 +102,21 @@ Running the importer against a disposable copy of the real file surfaced three i
 A full run against the real 236MB/636-part export completed in ~5.7 seconds with 0 warnings after these fixes. All four issues have regression tests in `EplanEdzImporterTests`.
 
 ---
+
+## ADR-005: Part Preview Images Stored as BLOBs, Not File-Path References
+
+**Status:** Accepted (2026-07-05)
+
+**Context:**
+The user asked for a visual preview (product photo) in the Parts Library window. `Part.PictureFilePath` already existed as a column, but it was populated from EPLAN's own unresolvable path style (e.g. `$(MD_IMG)\Siemens\...`) and was never actually written to by the M3 importer (pictures were explicitly out of scope for that pass). Extracting images to loose files on disk and storing a real local path in that column was the obvious-looking option, but it directly conflicts with a principle already established in ADR-003: the Project DB caches a copy of any referenced `Part` (identical schema to the Library DB) specifically so a project file is a single, self-contained, copyable SQLite file (also an explicit NFR in Section 7 of the requirements). A file-path reference silently breaks the moment the `.ecad` file is copied or moved without a side-folder of images coming with it.
+
+**Decision:**
+Added a new `PartImage` table (`Id`, `PartId`, `ContentType`, `ImageData BLOB`) — one row per part with an available picture — in both the Project DB and Library DB migrations (`0002_part_images.sql`, same intentional identical-DDL pattern as the `Part` family). `Part.PictureFilePath` itself is left alone (still unused/reserved).
+
+**Consequences:**
+- `EplanEdzImporter`'s image extraction runs **unconditionally**, not gated on the Added/Updated/Unchanged upsert result. This mattered in practice: re-running the importer to backfill images into the 636 already-imported parts found they all come back `Unchanged` (their source timestamp hasn't moved), so gating on that result would have skipped every one of them. `PartRepository.UpsertImage` is idempotent (delete-then-insert), so running it on every re-import is cheap and safe.
+- This surfaced a real, separate bug while implementing it: `PartRepository.UpsertByExternalKey` never set `part.Id` on its `Unchanged` return path, so the image backfill was silently writing against `PartId = 0` for every already-existing part. Fixed by setting `part.Id = existing.Id` before returning `Unchanged`, with a regression test (`Import_UnchangedPartMissingImage_BackfillsItOnReimport`).
+- Backfilling the real library: re-ran the importer against a disposable copy of the real `parts.edz` after this change — **525 of 636 parts got an image, 0 warnings**, migration 0002 applied cleanly on top of the already-populated (schema v1) `library.db`.
+- Images are lazy-loaded (`PartRepository.GetImage`) only when a part is selected in the UI, not as part of `GetAllParts()`, to avoid pulling ~600 BLOBs into memory just to render the list.
+
+---

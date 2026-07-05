@@ -259,6 +259,110 @@ public class EplanEdzImporterTests
         Assert.NotNull(parts.GetPartByExternalKey("TEST.PART.H"));
     }
 
+    [Fact]
+    public void Import_PartWithPicture_CachesImageAsBlob()
+    {
+        using var libraryFile = new TempSqliteFile();
+        using var connection = LibraryDatabase.Open(libraryFile.Path);
+        using var archiveFile = new TempSqliteFile();
+
+        var partXml = BuildPartXml("TEST.PART.I", "Description", 1000, pinCount: 1);
+        var imageBytes = new byte[] { 0xFF, 0xD8, 0xFF, 0xE0, 1, 2, 3 }; // fake JPEG-ish bytes; content is never decoded by the importer
+        var manifestXml = """
+            <?xml version="1.0" encoding="utf-8" ?>
+            <manifest version="2.0">
+             <packages>
+              <package type="part" key="TEST.PART.I" name="TEST.PART.I">
+               <items>
+                <item type="partxml" name="part" locator="TEST.PART.I.part.xml"/>
+                <item type="picture" name="picturefile" locator="photo.jpg"/>
+               </items>
+              </package>
+             </packages>
+            </manifest>
+            """;
+
+        using (var fileStream = new FileStream(archiveFile.Path, FileMode.Create))
+        using (var zip = new ZipArchive(fileStream, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "manifest.xml", manifestXml);
+            WriteEntry(zip, "items/partxml/TEST.PART.I.part.xml", partXml);
+            WriteEntry(zip, "items/picture/photo.jpg", imageBytes);
+        }
+
+        var result = EplanEdzImporter.Import(archiveFile.Path, connection);
+
+        Assert.Equal(1, result.PartsAdded);
+        Assert.Empty(result.Warnings);
+        var parts = new PartRepository(connection);
+        var image = parts.GetImage(parts.GetPartByExternalKey("TEST.PART.I")!.Id);
+        Assert.NotNull(image);
+        Assert.Equal("image/jpeg", image!.ContentType);
+        Assert.Equal(imageBytes, image.ImageData);
+    }
+
+    [Fact]
+    public void Import_UnchangedPartMissingImage_BackfillsItOnReimport()
+    {
+        // Regression scenario: a part imported before image support existed has an Unchanged
+        // timestamp on re-import — it must still get its image, not be skipped entirely.
+        using var libraryFile = new TempSqliteFile();
+        using var connection = LibraryDatabase.Open(libraryFile.Path);
+        using var archiveFile = new TempSqliteFile();
+
+        var partXml = BuildPartXml("TEST.PART.J", "Description", 1000, pinCount: 1);
+        var imageBytes = new byte[] { 9, 8, 7, 6 };
+        var manifestXml = """
+            <?xml version="1.0" encoding="utf-8" ?>
+            <manifest version="2.0">
+             <packages>
+              <package type="part" key="TEST.PART.J" name="TEST.PART.J">
+               <items>
+                <item type="partxml" name="part" locator="TEST.PART.J.part.xml"/>
+               </items>
+              </package>
+             </packages>
+            </manifest>
+            """;
+        var manifestXmlWithPicture = """
+            <?xml version="1.0" encoding="utf-8" ?>
+            <manifest version="2.0">
+             <packages>
+              <package type="part" key="TEST.PART.J" name="TEST.PART.J">
+               <items>
+                <item type="partxml" name="part" locator="TEST.PART.J.part.xml"/>
+                <item type="picture" name="picturefile" locator="photo.png"/>
+               </items>
+              </package>
+             </packages>
+            </manifest>
+            """;
+
+        using (var fileStream = new FileStream(archiveFile.Path, FileMode.Create))
+        using (var zip = new ZipArchive(fileStream, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "manifest.xml", manifestXml);
+            WriteEntry(zip, "items/partxml/TEST.PART.J.part.xml", partXml);
+        }
+        EplanEdzImporter.Import(archiveFile.Path, connection); // first import: no picture item at all
+
+        using var secondArchiveFile = new TempSqliteFile();
+        using (var fileStream = new FileStream(secondArchiveFile.Path, FileMode.Create))
+        using (var zip = new ZipArchive(fileStream, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "manifest.xml", manifestXmlWithPicture);
+            WriteEntry(zip, "items/partxml/TEST.PART.J.part.xml", partXml); // identical timestamp -> Unchanged
+            WriteEntry(zip, "items/picture/photo.png", imageBytes);
+        }
+        var result = EplanEdzImporter.Import(secondArchiveFile.Path, connection);
+
+        Assert.Equal(1, result.PartsUnchanged);
+        var parts = new PartRepository(connection);
+        var image = parts.GetImage(parts.GetPartByExternalKey("TEST.PART.J")!.Id);
+        Assert.NotNull(image);
+        Assert.Equal("image/png", image!.ContentType);
+    }
+
     private static void BuildSyntheticEdz(string zipPath, string externalKey, string description, long lastChangeUnixSeconds, int pinCount, bool includeConnectionPoints)
     {
         var partFileName = $"{externalKey}.part.xml";
@@ -337,5 +441,12 @@ public class EplanEdzImporterTests
         var entry = zip.CreateEntry(entryName);
         using var writer = new StreamWriter(entry.Open());
         writer.Write(content);
+    }
+
+    private static void WriteEntry(ZipArchive zip, string entryName, byte[] content)
+    {
+        var entry = zip.CreateEntry(entryName);
+        using var stream = entry.Open();
+        stream.Write(content);
     }
 }

@@ -1,4 +1,6 @@
 using System.Collections.ObjectModel;
+using System.IO;
+using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Ecad.Core.Models;
@@ -28,6 +30,9 @@ public partial class PartsLibraryViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private PartListItem? _selectedPart;
 
+    [ObservableProperty]
+    private BitmapImage? _previewImage;
+
     public ObservableCollection<PartListItem> Parts { get; } = [];
     public ObservableCollection<PartPinTemplate> PinTemplates { get; } = [];
     public ObservableCollection<PartTerminalSpec> TerminalSpecs { get; } = [];
@@ -50,11 +55,27 @@ public partial class PartsLibraryViewModel : ObservableObject, IDisposable
         PinTemplates.Clear();
         TerminalSpecs.Clear();
         Accessories.Clear();
+        PreviewImage = null;
         if (value is null) return;
 
         foreach (var template in _parts.GetPartPinTemplates(value.Part.Id)) PinTemplates.Add(template);
         foreach (var spec in _parts.GetPartTerminalSpecs(value.Part.Id)) TerminalSpecs.Add(spec);
         foreach (var accessory in _parts.GetPartAccessories(value.Part.Id)) Accessories.Add(accessory);
+        PreviewImage = ToBitmapImage(_parts.GetImage(value.Part.Id)?.ImageData);
+    }
+
+    private static BitmapImage? ToBitmapImage(byte[]? data)
+    {
+        if (data is null) return null;
+
+        var image = new BitmapImage();
+        using var stream = new MemoryStream(data);
+        image.BeginInit();
+        image.CacheOption = BitmapCacheOption.OnLoad; // load fully now so the stream can be disposed
+        image.StreamSource = stream;
+        image.EndInit();
+        image.Freeze();
+        return image;
     }
 
     private void Load()

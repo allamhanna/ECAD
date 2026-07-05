@@ -86,6 +86,10 @@ public class PartRepository(SqliteConnection connection)
         if (part.SourceLastModifiedUtc is not null && existing.SourceLastModifiedUtc is not null
             && part.SourceLastModifiedUtc <= existing.SourceLastModifiedUtc)
         {
+            // Callers rely on part.Id being populated after any upsert result, not just Added/Updated
+            // (e.g. EplanEdzImporter's image backfill runs on Unchanged parts too) — a real bug this
+            // caught: part.Id was left at 0 here, silently writing child rows against the wrong part.
+            part.Id = existing.Id;
             return PartUpsertResult.Unchanged;
         }
 
@@ -226,6 +230,22 @@ public class PartRepository(SqliteConnection connection)
                 "INSERT INTO PartAccessory (PartId, AccessoryPartExternalKey, Pos) VALUES (@PartId, @AccessoryPartExternalKey, @Pos);",
                 accessory, transaction);
         }
+        transaction.Commit();
+    }
+
+    public PartImage? GetImage(long partId)
+    {
+        return connection.QuerySingleOrDefault<PartImage>("SELECT * FROM PartImage WHERE PartId = @partId;", new { partId });
+    }
+
+    /// <summary>Deletes any existing image for the part and inserts the new one — idempotent, used both on first import and on backfilling an existing part.</summary>
+    public void UpsertImage(long partId, string contentType, byte[] imageData)
+    {
+        using var transaction = connection.BeginTransaction();
+        connection.Execute("DELETE FROM PartImage WHERE PartId = @partId;", new { partId }, transaction);
+        connection.Execute(
+            "INSERT INTO PartImage (PartId, ContentType, ImageData) VALUES (@partId, @contentType, @imageData);",
+            new { partId, contentType, imageData }, transaction);
         transaction.Commit();
     }
 

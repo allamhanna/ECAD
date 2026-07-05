@@ -6,31 +6,39 @@ namespace Ecad.Data.Tests;
 public class MigrationTests
 {
     [Fact]
-    public void ProjectDatabase_Open_AppliesMigrationsToVersion1()
+    public void ProjectDatabase_Open_AppliesAllMigrations()
     {
         using var file = new TempSqliteFile();
         using var connection = ProjectDatabase.Open(file.Path);
 
         var version = connection.QuerySingle<int>("SELECT MAX(version) FROM schema_migrations;");
-        Assert.Equal(1, version);
+        Assert.Equal(2, version);
 
         var tableExists = connection.QuerySingle<int>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Connection';");
         Assert.Equal(1, tableExists);
+
+        var partImageExists = connection.QuerySingle<int>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='PartImage';");
+        Assert.Equal(1, partImageExists);
     }
 
     [Fact]
-    public void LibraryDatabase_Open_AppliesMigrationsToVersion1()
+    public void LibraryDatabase_Open_AppliesAllMigrations()
     {
         using var file = new TempSqliteFile();
         using var connection = LibraryDatabase.Open(file.Path);
 
         var version = connection.QuerySingle<int>("SELECT MAX(version) FROM schema_migrations;");
-        Assert.Equal(1, version);
+        Assert.Equal(2, version);
 
         var tableExists = connection.QuerySingle<int>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Part';");
         Assert.Equal(1, tableExists);
+
+        var partImageExists = connection.QuerySingle<int>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='PartImage';");
+        Assert.Equal(1, partImageExists);
     }
 
     [Fact]
@@ -41,6 +49,6 @@ public class MigrationTests
         using var second = ProjectDatabase.Open(file.Path);
 
         var version = second.QuerySingle<int>("SELECT MAX(version) FROM schema_migrations;");
-        Assert.Equal(1, version);
+        Assert.Equal(2, version);
     }
 }
