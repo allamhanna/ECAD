@@ -6,13 +6,13 @@ Stack: C#/.NET 8, WPF, SkiaSharp, Svg.Skia, QuestPDF, Microsoft.Data.Sqlite (see
 
 ## Phase 1 — Daily-use internal tool
 
-- [~] **M0** — Toolchain + repo/solution scaffold
+- [x] **M0** — Toolchain + repo/solution scaffold
   - [x] Install .NET 8 SDK
   - [x] REQUIREMENTS.md / DECISIONS.md / PROGRESS.md / STRUCTURE.md in place
-  - [ ] git init + .gitignore + initial commit
-  - [ ] Solution + projects scaffolded (App/Core/Data/Rendering/Reports + tests)
-  - [ ] NuGet packages added, project references wired
-  - [ ] Solution builds cleanly end to end
+  - [x] git init + .gitignore + initial commit (`main` branch, commit `a33f132`)
+  - [x] Solution + projects scaffolded (App/Core/Data/Rendering/Reports + tests)
+  - [x] NuGet packages added, project references wired
+  - [x] Solution builds cleanly end to end (`dotnet build EcadApp.sln` — 0 errors)
 - [ ] **M1** — Data model & SQLite layer: schema for Project/Page/Device/Placement/Connection/Cable/Part/Symbol/Form-Report + UDPs, versioned migrations, repository layer
 - [ ] **M2** — App shell & project management: create/open/save project, main window, page list panel
 - [ ] **M3** — Parts library: CRUD, classification tree, custom properties (UDPs), EPLAN CSV/XML import wizard
@@ -42,3 +42,4 @@ Stack: C#/.NET 8, WPF, SkiaSharp, Svg.Skia, QuestPDF, Microsoft.Data.Sqlite (see
 ## Log
 
 - **2026-07-05** — Project folder created (`Documents\electrical CAD`). Requirements reviewed, stack decided (ADR-001), milestone roadmap defined, M0 started: .NET 8 SDK installed via winget.
+- **2026-07-05** — M0 completed: solution `EcadApp.sln` scaffolded with `Ecad.App` (WPF), `Ecad.Core`, `Ecad.Data`, `Ecad.Rendering`, `Ecad.Reports`, plus `Ecad.Core.Tests`/`Ecad.Data.Tests`. NuGet packages added (SkiaSharp.Views.WPF + Svg.Skia on Rendering, QuestPDF on Reports, Microsoft.Data.Sqlite on Data). Project references wired per dependency direction in STRUCTURE.md. Full solution builds with 0 errors (some expected NU1701 compatibility warnings from SkiaSharp.Views.WPF/OpenTK targeting older .NET Framework TFMs — functional, revisit if it causes runtime issues once the canvas work starts in M5). Git repo initialized, initial commit `a33f132` on `main`. Next: M1 (data model & SQLite layer).
