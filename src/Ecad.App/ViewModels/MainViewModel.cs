@@ -19,7 +19,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _statusText = "No project open.";
 
+    // RelayCommand doesn't auto-requery on property changes — without these attributes, Save/SaveAs/
+    // CloseProject/AddPage stay in whatever CanExecute state they had when first queried (disabled),
+    // regardless of IsProjectOpen actually changing afterward.
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SaveAsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CloseProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     private bool _isProjectOpen;
 
     public ObservableCollection<Page> Pages { get; } = [];
