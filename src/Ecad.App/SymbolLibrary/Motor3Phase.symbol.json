@@ -1,0 +1,15 @@
+{
+  "name": "Motor3Phase",
+  "category": "Machines",
+  "connectionPoints": [
+    { "pin": "U", "x": 10, "y": 0, "direction": 270 },
+    { "pin": "V", "x": 20, "y": 0, "direction": 270 },
+    { "pin": "W", "x": 30, "y": 0, "direction": 270 }
+  ],
+  "textPlaceholders": [
+    { "kind": "Tag", "x": 20, "y": 40, "anchor": "middle" }
+  ],
+  "variants": [
+    { "name": "Default", "rotationDegrees": 0, "mirrored": false }
+  ]
+}

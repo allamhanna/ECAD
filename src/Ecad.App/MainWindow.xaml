@@ -18,6 +18,7 @@
                 <Separator/>
                 <MenuItem Header="_Import EPLAN Parts..." Command="{Binding ImportEplanPartsCommand}"/>
                 <MenuItem Header="_Parts Library..." Command="{Binding OpenPartsLibraryCommand}"/>
+                <MenuItem Header="Symbol _Browser..." Command="{Binding OpenSymbolBrowserCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}"/>
             </MenuItem>

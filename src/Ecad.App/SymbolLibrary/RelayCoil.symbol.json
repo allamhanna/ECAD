@@ -1,0 +1,15 @@
+{
+  "name": "RelayCoil",
+  "category": "Coils",
+  "connectionPoints": [
+    { "pin": "A1", "x": 0, "y": 20, "direction": 180 },
+    { "pin": "A2", "x": 40, "y": 20, "direction": 0 }
+  ],
+  "textPlaceholders": [
+    { "kind": "Tag", "x": 20, "y": 5, "anchor": "middle" },
+    { "kind": "CrossReference", "x": 20, "y": 38, "anchor": "middle" }
+  ],
+  "variants": [
+    { "name": "Default", "rotationDegrees": 0, "mirrored": false }
+  ]
+}

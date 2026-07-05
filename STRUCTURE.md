@@ -2,7 +2,7 @@
 
 This file describes the actual folder/solution layout as it exists, kept in sync as the project is built. See `DECISIONS.md` ADR-001 for the stack rationale and `PROGRESS.md` for what's built vs planned.
 
-## Current layout (as of Part image preview complete)
+## Current layout (as of M4 — Symbol format & starter set — complete)
 
 ```
 electrical CAD/
@@ -24,6 +24,12 @@ electrical CAD/
       Views/                NewProjectDialog, AddPageDialog — plain code-behind modal dialogs
                              PartsLibraryWindow — non-modal, master-detail parts browser (read-only),
                              detail panel includes an Image control bound to PreviewImage
+                             SymbolBrowserViewModel — loads SymbolLibrary/ via SymbolLibraryLoader,
+                             rasterizes each via SymbolRasterizer, exposes thumbnails
+                             SymbolBrowserWindow — non-modal, wrapped thumbnail grid (read-only)
+      SymbolLibrary/         8 starter IEC-style symbols: RelayCoil, ContactNO, ContactNC, Terminal,
+                             Motor3Phase, PushbuttonNO, Fuse, Lamp — each a plain .svg + .symbol.json
+                             sidecar (see ADR-006), Content/CopyToOutputDirectory
       MainWindow.xaml(.cs)  File menu, page ListView (Function/Location/DocType/PageNumber/Type columns),
                              status bar; DataContext = MainViewModel
     Ecad.Core/             domain models & business logic (net8.0, no UI/storage deps)
@@ -55,13 +61,18 @@ electrical CAD/
                              Library DB — see ADR-004 for format quirks this handles, ADR-005 for
                              the unconditional (Added/Updated/Unchanged-independent) image backfill
       Import/EplanImportResult.cs  counts + warnings returned to the caller
-    Ecad.Rendering/        canvas + SVG symbol rendering (net8.0-windows, UseWPF) — packages added, empty stub
+    Ecad.Rendering/        canvas + SVG symbol rendering (net8.0-windows, UseWPF)
+      Symbols/SymbolDefinition.cs      ConnectionPoint/TextPlaceholder/Variant POCOs + JSON (de)serialization
+      Symbols/SymbolLibraryLoader.cs   scans a folder for *.symbol.json + matching .svg (see ADR-006)
+      Symbols/SymbolRasterizer.cs      SkiaSharp + Svg.Skia: SVG bytes -> PNG byte array (no WPF dependency)
     Ecad.Reports/          report layout + QuestPDF generation (net8.0) — QuestPDF added, empty stub
   tests/
     Ecad.Core.Tests/       DeviceTagTests, PageTagTests (8 tests)
     Ecad.Data.Tests/       MigrationTests, ProjectSchemaTests, PartUpsertTests, ProjectSessionTests,
                            EplanEdzImporterTests (synthetic zip fixtures, see ADR-004/ADR-005),
                            TempSqliteFile helper (29 tests)
+    Ecad.Rendering.Tests/  SymbolLibraryLoaderTests, SymbolRasterizerTests, TempDirectory helper
+                           (net8.0-windows, matching Ecad.Rendering's TFM) (6 tests)
 ```
 
 Note: `Ecad.Rendering` targets `net8.0-windows` with `UseWPF=true` (not plain `net8.0`) because `SkiaSharp.Views.WPF` needs the WPF/Windows target framework to compile.
@@ -70,6 +81,6 @@ Dependency direction: `Ecad.App` depends on `Ecad.Core`, `Ecad.Data`, `Ecad.Rend
 
 Two SQLite databases per ADR-003: a per-project file (Project DB) and a shared `library.db` (Library DB). The `Part`/`PartPinTemplate`/`PartTerminalSpec`/`PartAccessory` tables exist with identical DDL in both — the Project DB's copy is a local cache populated when a Device first references a library Part, so a project file stays portable on its own.
 
-Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 37 tests passing (`dotnet test` on both test projects). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. The Parts Library browser window's visual/interactive behavior (including the image preview) against that populated library.db is pending a user click-through.
+Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 43 tests passing across four test projects. Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. Verified `SymbolLibrary/*` files actually land in the build output directory (`bin/Debug/net8.0-windows/SymbolLibrary/`). The Parts Library and Symbol Browser windows' visual/interactive behavior is pending a user click-through.
 
-This section will be updated with real detail as each milestone lands — next up: M5 (schematic canvas) most likely, or fast-follow additions to the parts library (editing, classification) — to be decided with the user.
+This section will be updated with real detail as each milestone lands — next up: M5 (schematic canvas), to be decided with the user.

@@ -1,0 +1,14 @@
+{
+  "name": "Lamp",
+  "category": "Indicators",
+  "connectionPoints": [
+    { "pin": "X1", "x": 20, "y": 0, "direction": 270 },
+    { "pin": "X2", "x": 20, "y": 40, "direction": 90 }
+  ],
+  "textPlaceholders": [
+    { "kind": "Tag", "x": 34, "y": 20, "anchor": "start" }
+  ],
+  "variants": [
+    { "name": "Default", "rotationDegrees": 0, "mirrored": false }
+  ]
+}

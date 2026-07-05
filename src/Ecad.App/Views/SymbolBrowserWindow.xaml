@@ -1,0 +1,32 @@
+<Window x:Class="Ecad.App.Views.SymbolBrowserWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Symbol Browser" Height="500" Width="700">
+    <DockPanel Margin="8">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button Content="Refresh" Command="{Binding RefreshCommand}" Padding="8,2" Margin="0,0,12,0"/>
+            <TextBlock Text="{Binding StatusText}" VerticalAlignment="Center" Foreground="Gray"/>
+        </StackPanel>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding Symbols}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel Orientation="Horizontal"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderBrush="LightGray" BorderThickness="1" Margin="6" Padding="8" Width="140">
+                            <StackPanel HorizontalAlignment="Center">
+                                <Image Source="{Binding Thumbnail}" Width="96" Height="96"/>
+                                <TextBlock Text="{Binding Definition.Name}" HorizontalAlignment="Center" FontWeight="Bold" Margin="0,4,0,0" TextWrapping="Wrap" TextAlignment="Center"/>
+                                <TextBlock Text="{Binding Definition.Category}" HorizontalAlignment="Center" Foreground="Gray"/>
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

@@ -120,3 +120,24 @@ Added a new `PartImage` table (`Id`, `PartId`, `ContentType`, `ImageData BLOB`) 
 - Images are lazy-loaded (`PartRepository.GetImage`) only when a part is selected in the UI, not as part of `GetAllParts()`, to avoid pulling ~600 BLOBs into memory just to render the list.
 
 ---
+
+## ADR-006: Symbol Format — Plain SVG + JSON Sidecar, Bundled Not Database-Driven
+
+**Status:** Accepted (2026-07-05)
+
+**Context:**
+M1 deliberately left `Ecad.Core.Models.Symbol` minimal, deferring the actual SVG symbol format to M4 (Section 5.8, Section 9 of the requirements). M3 already ruled out reusing EPLAN's own `.ema` macros as a symbol source (ADR-003 — proprietary, unpublished internal object-model dump). M4 designs the format from scratch and ships a small starter IEC-style set.
+
+**Decision:**
+- A symbol is two files: `{Name}.svg` (a plain, standard SVG — editable in any vector tool, no custom namespaces or embedded metadata) and `{Name}.symbol.json` (our metadata: `connectionPoints` [pin, x, y, direction], `textPlaceholders` [kind, x, y, anchor], `variants` [name, rotationDegrees, mirrored]). Keeping metadata in a sidecar rather than embedded in the SVG means the graphic survives round-tripping through an external SVG editor without special handling, matching the requirements' "open, editable underlying formats" principle.
+- Every symbol shares a `0 0 40 40` viewBox — one nominal grid cell — so connection-point coordinates are consistent across the library regardless of final on-canvas scale (relevant once M5 places symbols on a real page).
+- Storage is **bundled with the app** (`Ecad.App/SymbolLibrary/*.svg`/`*.symbol.json`, `Content`/`CopyToOutputDirectory`), resolved via `AppContext.BaseDirectory` — not database-driven yet. The Library DB's `Symbol` table (from M1) stays unused until M5/M6 actually need a `Placement` to reference a specific symbol row; populating it now would be premature since nothing consumes it.
+- Rendering for the M4 Symbol Browser is **static rasterization**, not the interactive `SkiaSharp.Views.WPF` canvas control: `SymbolRasterizer` (plain `SkiaSharp` + `Svg.Skia`, no WPF dependency) renders each symbol's SVG to a PNG byte array once, shown via a WPF `Image`/`BitmapImage` — the same `byte[] → BitmapImage` pattern already used for part preview images (ADR-005). This keeps the parsing/rasterization logic fully unit-testable and defers the actual interactive canvas control to M5, where it's needed for real.
+- Starter set: 8 hand-authored IEC 60617-style symbols (Relay/Contactor Coil, NO Contact, NC Contact, Terminal, 3-Phase Motor, Pushbutton NO, Fuse, Lamp/Indicator) — simple line/circle/rect geometry, recognizable but not intended as polished final artwork.
+
+**Consequences:**
+- `Ecad.Rendering` gained a new `Symbols/` namespace (`SymbolDefinition` + child POCOs, `SymbolLibraryLoader`, `SymbolRasterizer`) and its own test project, `Ecad.Rendering.Tests` (net8.0-windows, matching `Ecad.Rendering`'s TFM) — the first tests for that project since M0.
+- The loader tolerates real-world-shaped problems the same way M3's importer does: a `.symbol.json` with no matching `.svg`, or one malformed JSON file, produces a warning and is skipped rather than aborting the whole library load.
+- Symbol placement, rotation/mirror application, and connection-point-driven wiring are explicitly out of scope here — that's M5 (canvas) and M6 (device tagging/cross-references).
+
+---

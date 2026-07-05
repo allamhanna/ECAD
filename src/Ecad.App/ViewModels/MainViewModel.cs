@@ -161,6 +161,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private static void OpenPartsLibrary() => new PartsLibraryWindow().Show();
 
     [RelayCommand]
+    private static void OpenSymbolBrowser() => new SymbolBrowserWindow().Show();
+
+    [RelayCommand]
     private static void Exit() => Application.Current.Shutdown();
 
     private void RefreshFromSession()
