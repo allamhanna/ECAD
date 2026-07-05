@@ -32,9 +32,19 @@ public class PartRepository(SqliteConnection connection)
         return InsertOrganization(new Organization { Name = name, ExternalKey = externalKey });
     }
 
+    public IReadOnlyList<Organization> GetAllOrganizations()
+    {
+        return connection.Query<Organization>("SELECT * FROM Organization ORDER BY Name;").ToList();
+    }
+
     public Part? GetPart(long id)
     {
         return connection.QuerySingleOrDefault<PartRow>("SELECT * FROM Part WHERE Id = @id;", new { id })?.ToModel();
+    }
+
+    public IReadOnlyList<Part> GetAllParts()
+    {
+        return connection.Query<PartRow>("SELECT * FROM Part ORDER BY ExternalKey;").Select(r => r.ToModel()).ToList();
     }
 
     public Part? GetPartByExternalKey(string externalKey)

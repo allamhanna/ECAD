@@ -80,4 +80,37 @@ public class PartUpsertTests
         Assert.Single(parts.GetPartPinTemplates(partId));
         Assert.Single(parts.GetPartTerminalSpecs(partId));
     }
+
+    [Fact]
+    public void GetAllParts_ReturnsEveryPartOrderedByExternalKey()
+    {
+        using var file = new TempSqliteFile();
+        using var connection = LibraryDatabase.Open(file.Path);
+        var parts = new PartRepository(connection);
+
+        parts.UpsertByExternalKey(new Part { ExternalKey = "B" }, DateTimeOffset.UtcNow);
+        parts.UpsertByExternalKey(new Part { ExternalKey = "A" }, DateTimeOffset.UtcNow);
+        parts.UpsertByExternalKey(new Part { ExternalKey = "C" }, DateTimeOffset.UtcNow);
+
+        var all = parts.GetAllParts();
+
+        Assert.Equal(["A", "B", "C"], all.Select(p => p.ExternalKey));
+    }
+
+    [Fact]
+    public void GetAllOrganizations_ReturnsEveryOrganization()
+    {
+        using var file = new TempSqliteFile();
+        using var connection = LibraryDatabase.Open(file.Path);
+        var parts = new PartRepository(connection);
+
+        parts.GetOrCreateOrganization("Siemens", "SIE");
+        parts.GetOrCreateOrganization("ABB", "ABB");
+        parts.GetOrCreateOrganization("Siemens", "SIE"); // repeat -> should not duplicate
+
+        var all = parts.GetAllOrganizations();
+
+        Assert.Equal(2, all.Count);
+        Assert.Contains(all, o => o.Name == "Siemens" && o.ExternalKey == "SIE");
+    }
 }

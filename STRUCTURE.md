@@ -2,7 +2,7 @@
 
 This file describes the actual folder/solution layout as it exists, kept in sync as the project is built. See `DECISIONS.md` ADR-001 for the stack rationale and `PROGRESS.md` for what's built vs planned.
 
-## Current layout (as of M3 complete)
+## Current layout (as of Parts Library browser complete)
 
 ```
 electrical CAD/
@@ -17,8 +17,11 @@ electrical CAD/
       App.xaml.cs           global DispatcherUnhandledException handler (shows a message box)
       ViewModels/           MainViewModel (CommunityToolkit.Mvvm ObservableObject + RelayCommands:
                              NewProject, OpenProject, Save, SaveAs, CloseProject, AddPage,
-                             ImportEplanPartsAsync, Exit)
+                             ImportEplanPartsAsync, OpenPartsLibrary, Exit)
+                             PartsLibraryViewModel — owns its own Library DB connection, search/filter
+                             over all Parts + detail lookups (PinTemplates/TerminalSpecs/Accessories)
       Views/                NewProjectDialog, AddPageDialog — plain code-behind modal dialogs
+                             PartsLibraryWindow — non-modal, master-detail parts browser (read-only)
       MainWindow.xaml(.cs)  File menu, page ListView (Function/Location/DocType/PageNumber/Type columns),
                              status bar; DataContext = MainViewModel
     Ecad.Core/             domain models & business logic (net8.0, no UI/storage deps)
@@ -41,7 +44,8 @@ electrical CAD/
       Repositories/         ProjectRepository (+ GetFirstProject, GetPages), DeviceRepository,
                              PlacementRepository (+ cross-reference query), ConnectionRepository,
                              CableRepository, PartRepository (+ upsert-by-ExternalKey, Replace*
-                             child-row helpers, GetOrCreateOrganization), UdpRepository
+                             child-row helpers, GetOrCreateOrganization, GetAllParts,
+                             GetAllOrganizations), UdpRepository
                              — Dapper on top of Microsoft.Data.Sqlite
       Import/EplanEdzImporter.cs   parses a real EPLAN .edz (7z, read via SharpCompress) into the
                              Library DB — see ADR-004 for format quirks this handles
@@ -52,7 +56,7 @@ electrical CAD/
     Ecad.Core.Tests/       DeviceTagTests, PageTagTests (8 tests)
     Ecad.Data.Tests/       MigrationTests, ProjectSchemaTests, PartUpsertTests, ProjectSessionTests,
                            EplanEdzImporterTests (synthetic zip fixtures, see ADR-004),
-                           TempSqliteFile helper (25 tests)
+                           TempSqliteFile helper (27 tests)
 ```
 
 Note: `Ecad.Rendering` targets `net8.0-windows` with `UseWPF=true` (not plain `net8.0`) because `SkiaSharp.Views.WPF` needs the WPF/Windows target framework to compile.
@@ -61,6 +65,6 @@ Dependency direction: `Ecad.App` depends on `Ecad.Core`, `Ecad.Data`, `Ecad.Rend
 
 Two SQLite databases per ADR-003: a per-project file (Project DB) and a shared `library.db` (Library DB). The `Part`/`PartPinTemplate`/`PartTerminalSpec`/`PartAccessory` tables exist with identical DDL in both — the Project DB's copy is a local cache populated when a Device first references a library Part, so a project file stays portable on its own.
 
-Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 33 tests passing (`dotnet test` on both test projects). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings.
+Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 35 tests passing (`dotnet test` on both test projects). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings. The Parts Library browser window's visual/interactive behavior against that same populated library.db is pending a user click-through.
 
-This section will be updated with real detail as each milestone lands — next up: parts management UI (browse/view what M3 imported) or M5 (schematic canvas), to be decided with the user.
+This section will be updated with real detail as each milestone lands — next up: M5 (schematic canvas) most likely, or fast-follow additions to the parts library (editing, classification) — to be decided with the user.

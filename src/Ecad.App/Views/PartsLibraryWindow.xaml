@@ -1,0 +1,98 @@
+<Window x:Class="Ecad.App.Views.PartsLibraryWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Parts Library" Height="700" Width="1100">
+    <DockPanel Margin="8">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <TextBox Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Width="300" VerticalAlignment="Center"/>
+            <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="12,0,0,0" Padding="8,2"/>
+            <TextBlock Text="{Binding Parts.Count, StringFormat='{}{0} parts'}" VerticalAlignment="Center" Margin="12,0,0,0" Foreground="Gray"/>
+        </StackPanel>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="3*"/>
+            </Grid.ColumnDefinitions>
+
+            <ListView Grid.Column="0" ItemsSource="{Binding Parts}" SelectedItem="{Binding SelectedPart}">
+                <ListView.View>
+                    <GridView>
+                        <GridViewColumn Header="Article Number" Width="150" DisplayMemberBinding="{Binding Part.ExternalKey}"/>
+                        <GridViewColumn Header="Description" Width="220" DisplayMemberBinding="{Binding Part.Description1}"/>
+                        <GridViewColumn Header="Manufacturer" Width="120" DisplayMemberBinding="{Binding ManufacturerName}"/>
+                        <GridViewColumn Header="Type Number" Width="120" DisplayMemberBinding="{Binding Part.TypeNumber}"/>
+                    </GridView>
+                </ListView.View>
+            </ListView>
+
+            <GridSplitter Grid.Column="1" Width="8" HorizontalAlignment="Stretch" Background="LightGray"/>
+
+            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+                <StackPanel DataContext="{Binding SelectedPart}" Margin="8,0,0,0">
+                    <TextBlock Text="{Binding Part.ExternalKey}" FontWeight="Bold" FontSize="16" Margin="0,0,0,8"/>
+
+                    <UniformGrid Columns="2" Margin="0,0,0,12">
+                        <TextBlock Text="{Binding Part.TypeNumber, StringFormat='Type Number: {0}'}"/>
+                        <TextBlock Text="{Binding Part.PartType, StringFormat='Part Type: {0}'}"/>
+                        <TextBlock Text="{Binding ManufacturerName, StringFormat='Manufacturer: {0}'}"/>
+                        <TextBlock Text="{Binding SupplierName, StringFormat='Supplier: {0}'}"/>
+                        <TextBlock Text="{Binding Part.HeightMm, StringFormat='Height (mm): {0}'}"/>
+                        <TextBlock Text="{Binding Part.WidthMm, StringFormat='Width (mm): {0}'}"/>
+                        <TextBlock Text="{Binding Part.DepthMm, StringFormat='Depth (mm): {0}'}"/>
+                        <TextBlock Text="{Binding Part.WeightKg, StringFormat='Weight (kg): {0}'}"/>
+                        <TextBlock Text="{Binding Part.IsAccessory, StringFormat='Is Accessory: {0}'}"/>
+                        <TextBlock Text="{Binding Part.ErpNumber, StringFormat='ERP Number: {0}'}"/>
+                        <TextBlock Text="{Binding Part.SalesPrice1, StringFormat='Sales Price 1: {0}'}"/>
+                        <TextBlock Text="{Binding Part.PurchasePrice1, StringFormat='Purchase Price 1: {0}'}"/>
+                        <TextBlock Text="{Binding Part.SourceLastModifiedUtc, StringFormat='Source Last Modified: {0}'}"/>
+                    </UniformGrid>
+
+                    <TextBlock Text="{Binding Part.Description2}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                    <TextBlock Text="{Binding Part.Note}" TextWrapping="Wrap" Foreground="DimGray" Margin="0,0,0,12"/>
+
+                    <TextBlock Text="Pin Templates" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <DataGrid ItemsSource="{Binding DataContext.PinTemplates, RelativeSource={RelativeSource AncestorType=Window}}"
+                              IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140" Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Pos" Binding="{Binding Pos}" Width="40"/>
+                            <DataGridTextColumn Header="Connection Designation" Binding="{Binding ConnectionDesignation}" Width="180"/>
+                            <DataGridTextColumn Header="Func. Category" Binding="{Binding FunctionDefCategory}" Width="90"/>
+                            <DataGridTextColumn Header="Func. Group" Binding="{Binding FunctionDefGroup}" Width="90"/>
+                            <DataGridTextColumn Header="Func. Id" Binding="{Binding FunctionDefId}" Width="70"/>
+                            <DataGridTextColumn Header="Symbol Ref" Binding="{Binding SymbolRef}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Terminal Specs" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <DataGrid ItemsSource="{Binding DataContext.TerminalSpecs, RelativeSource={RelativeSource AncestorType=Window}}"
+                              IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140" Margin="0,0,0,12">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Name" Binding="{Binding Name}" Width="60"/>
+                            <DataGridTextColumn Header="Pos" Binding="{Binding Pos}" Width="40"/>
+                            <DataGridTextColumn Header="Min mm²" Binding="{Binding MinCrossSectionMm2}" Width="70"/>
+                            <DataGridTextColumn Header="Max mm²" Binding="{Binding MaxCrossSectionMm2}" Width="70"/>
+                            <DataGridTextColumn Header="Min Torque" Binding="{Binding MinTorqueNm}" Width="80"/>
+                            <DataGridTextColumn Header="Max Torque" Binding="{Binding MaxTorqueNm}" Width="80"/>
+                            <DataGridTextColumn Header="Max Wires" Binding="{Binding MaxWireCount}" Width="80"/>
+                            <DataGridTextColumn Header="X" Binding="{Binding X}" Width="50"/>
+                            <DataGridTextColumn Header="Y" Binding="{Binding Y}" Width="50"/>
+                            <DataGridTextColumn Header="Z" Binding="{Binding Z}" Width="50"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+
+                    <TextBlock Text="Accessories" FontWeight="Bold" Margin="0,0,0,4"/>
+                    <DataGrid ItemsSource="{Binding DataContext.Accessories, RelativeSource={RelativeSource AncestorType=Window}}"
+                              IsReadOnly="True" AutoGenerateColumns="False" MaxHeight="140">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Pos" Binding="{Binding Pos}" Width="40"/>
+                            <DataGridTextColumn Header="Accessory Part Key" Binding="{Binding AccessoryPartExternalKey}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </ScrollViewer>
+        </Grid>
+    </DockPanel>
+</Window>

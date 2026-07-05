@@ -158,6 +158,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private bool CanImportEplanParts() => !IsImporting;
 
     [RelayCommand]
+    private static void OpenPartsLibrary() => new PartsLibraryWindow().Show();
+
+    [RelayCommand]
     private static void Exit() => Application.Current.Shutdown();
 
     private void RefreshFromSession()
