@@ -26,6 +26,13 @@ public class ProjectRepository(SqliteConnection connection)
             });
     }
 
+    /// <summary>A Project DB is expected to hold exactly one Project row; this is how the app loads it on open.</summary>
+    public Project? GetFirstProject()
+    {
+        return connection.QuerySingleOrDefault<ProjectRow>(
+            "SELECT * FROM Project ORDER BY Id LIMIT 1;")?.ToModel();
+    }
+
     public Project? GetProject(long id)
     {
         return connection.QuerySingleOrDefault<ProjectRow>(
@@ -57,6 +64,14 @@ public class ProjectRepository(SqliteConnection connection)
     {
         return connection.QuerySingleOrDefault<PageRow>(
             "SELECT * FROM Page WHERE Id = @id;", new { id })?.ToModel();
+    }
+
+    public IReadOnlyList<Page> GetPages(long projectId)
+    {
+        return connection.Query<PageRow>(
+            "SELECT * FROM Page WHERE ProjectId = @projectId ORDER BY SortOrder, Id;", new { projectId })
+            .Select(r => r.ToModel())
+            .ToList();
     }
 
     private sealed record ProjectRow(long Id, string Name, string? Customer, string? ProjectNumber, string? Revision,
