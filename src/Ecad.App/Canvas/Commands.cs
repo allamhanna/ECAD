@@ -5,7 +5,7 @@ using Ecad.Rendering.Symbols;
 
 namespace Ecad.App.Canvas;
 
-/// <summary>Places a new symbol on the page. Undo deletes the placement it created.</summary>
+/// <summary>Places a new symbol on the page as a brand-new Device. Undo deletes the placement it created.</summary>
 internal sealed class PlaceSymbolCommand : IUndoableCommand
 {
     private readonly ProjectSession _session;
@@ -15,11 +15,14 @@ internal sealed class PlaceSymbolCommand : IUndoableCommand
     private readonly IReadOnlyList<string> _pinNames;
     private readonly double _x;
     private readonly double _y;
+    private readonly string? _function;
+    private readonly string? _location;
     private readonly string _deviceTag;
     private long _placementId;
 
     public PlaceSymbolCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId,
-        LoadedSymbol symbol, IReadOnlyList<string> pinNames, double x, double y, string deviceTag)
+        LoadedSymbol symbol, IReadOnlyList<string> pinNames, double x, double y,
+        string? function, string? location, string deviceTag)
     {
         _session = session;
         _viewModel = viewModel;
@@ -28,15 +31,17 @@ internal sealed class PlaceSymbolCommand : IUndoableCommand
         _pinNames = pinNames;
         _x = x;
         _y = y;
+        _function = function;
+        _location = location;
         _deviceTag = deviceTag;
     }
 
     public void Do()
     {
         var placement = _session.PlaceSymbol(_pageId, _symbol.Definition.Name, "Starter", _symbol.SvgFilePath,
-            _symbol.Definition.Category, _pinNames, _x, _y, _deviceTag);
+            _symbol.Definition.Category, _pinNames, _x, _y, _function, _location, _deviceTag);
         _placementId = placement.Id;
-        _viewModel.AddPlacementToView(placement.Id, placement.DeviceId, _deviceTag, _symbol, _x, _y, 0, false);
+        _viewModel.AddPlacementToView(placement.Id, placement.DeviceId, _function, _location, _deviceTag, _symbol, _x, _y, 0, false);
     }
 
     public void Undo()
@@ -46,20 +51,71 @@ internal sealed class PlaceSymbolCommand : IUndoableCommand
     }
 }
 
-/// <summary>Renames a placement's device tag between two known values.</summary>
-internal sealed class RenameTagCommand(ProjectSession session, SchematicPageViewModel viewModel, long placementId,
-    long deviceId, string fromTag, string toTag) : IUndoableCommand
+/// <summary>
+/// Places a new symbol as another Placement of an EXISTING Device (M6: multi-placement devices).
+/// Undo removes just this placement — the Device and its other placements are untouched, since
+/// they were already there before this command ran.
+/// </summary>
+internal sealed class AttachPlacementCommand : IUndoableCommand
 {
+    private readonly ProjectSession _session;
+    private readonly SchematicPageViewModel _viewModel;
+    private readonly long _pageId;
+    private readonly long _deviceId;
+    private readonly string? _function;
+    private readonly string? _location;
+    private readonly string _deviceTag;
+    private readonly LoadedSymbol _symbol;
+    private readonly IReadOnlyList<string> _pinNames;
+    private readonly double _x;
+    private readonly double _y;
+    private long _placementId;
+
+    public AttachPlacementCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId, long deviceId,
+        string? function, string? location, string deviceTag, LoadedSymbol symbol, IReadOnlyList<string> pinNames, double x, double y)
+    {
+        _session = session;
+        _viewModel = viewModel;
+        _pageId = pageId;
+        _deviceId = deviceId;
+        _function = function;
+        _location = location;
+        _deviceTag = deviceTag;
+        _symbol = symbol;
+        _pinNames = pinNames;
+        _x = x;
+        _y = y;
+    }
+
     public void Do()
     {
-        session.RenameDevice(deviceId, toTag);
-        viewModel.UpdatePlacementTag(placementId, toTag);
+        var placement = _session.PlaceSymbolOnExistingDevice(_deviceId, _pageId, _symbol.Definition.Name, "Starter",
+            _symbol.SvgFilePath, _symbol.Definition.Category, _pinNames, _x, _y);
+        _placementId = placement.Id;
+        _viewModel.AddPlacementToView(placement.Id, _deviceId, _function, _location, _deviceTag, _symbol, _x, _y, 0, false);
     }
 
     public void Undo()
     {
-        session.RenameDevice(deviceId, fromTag);
-        viewModel.UpdatePlacementTag(placementId, fromTag);
+        _session.DeletePlacement(_placementId);
+        _viewModel.RemovePlacementFromView(_placementId);
+    }
+}
+
+/// <summary>Renames a placement's device tag (all three IEC 81346 segments) between two known states.</summary>
+internal sealed class RenameTagCommand(ProjectSession session, SchematicPageViewModel viewModel, long placementId, long deviceId,
+    string? fromFunction, string? fromLocation, string fromTag, string? toFunction, string? toLocation, string toTag) : IUndoableCommand
+{
+    public void Do()
+    {
+        session.RenameDeviceTag(deviceId, toFunction, toLocation, toTag);
+        viewModel.UpdatePlacementTag(placementId, toFunction, toLocation, toTag);
+    }
+
+    public void Undo()
+    {
+        session.RenameDeviceTag(deviceId, fromFunction, fromLocation, fromTag);
+        viewModel.UpdatePlacementTag(placementId, fromFunction, fromLocation, fromTag);
     }
 }
 
@@ -98,10 +154,11 @@ internal sealed class RotateCommand(ProjectSession session, SchematicPageViewMod
 }
 
 /// <summary>
-/// Deletes a placement. Undo re-creates a new Device/Placement with the same visual properties
-/// rather than restoring the exact original row IDs — a deliberate simplification (see
-/// DECISIONS.md): the M1 schema cascades a Device delete through DevicePin/Placement/PlacementPin,
-/// so there's nothing left to "undelete" by ID, only enough information to recreate it visually.
+/// Deletes a placement. If it was the Device's last placement (see DECISIONS.md ADR-007/ADR-008),
+/// undo re-creates a whole new Device with the same visual properties — new row IDs, visually
+/// identical. If sibling placements remain (M6: multi-placement devices), the Device survives the
+/// delete, so undo instead re-creates just a new Placement on that same, still-existing Device.
+/// Either way there's nothing to "undelete" by ID once the DB call returns.
 /// </summary>
 internal sealed class DeleteCommand : IUndoableCommand
 {
@@ -109,24 +166,20 @@ internal sealed class DeleteCommand : IUndoableCommand
     private readonly SchematicPageViewModel _viewModel;
     private readonly long _pageId;
     private readonly LoadedSymbol _symbol;
-    private readonly IReadOnlyList<string> _pinNames;
-    private readonly string _deviceTag;
     private readonly double _x;
     private readonly double _y;
     private readonly int _rotationDegrees;
     private readonly bool _mirrored;
     private long _placementId;
+    private PlacementDeletionResult? _deletionResult;
 
-    public DeleteCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId,
-        PlacementViewItem snapshot, LoadedSymbol symbol, IReadOnlyList<string> pinNames)
+    public DeleteCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId, PlacementViewItem snapshot, LoadedSymbol symbol)
     {
         _session = session;
         _viewModel = viewModel;
         _pageId = pageId;
         _symbol = symbol;
-        _pinNames = pinNames;
         _placementId = snapshot.PlacementId;
-        _deviceTag = snapshot.DeviceTag;
         _x = snapshot.X;
         _y = snapshot.Y;
         _rotationDegrees = snapshot.RotationDegrees;
@@ -135,18 +188,25 @@ internal sealed class DeleteCommand : IUndoableCommand
 
     public void Do()
     {
-        _session.DeletePlacement(_placementId);
+        _deletionResult = _session.DeletePlacement(_placementId);
         _viewModel.RemovePlacementFromView(_placementId);
     }
 
     public void Undo()
     {
-        var placement = _session.PlaceSymbol(_pageId, _symbol.Definition.Name, "Starter", _symbol.SvgFilePath,
-            _symbol.Definition.Category, _pinNames, _x, _y, _deviceTag);
+        var result = _deletionResult ?? throw new InvalidOperationException("Undo called before Do.");
+
+        var placement = result.DeviceDeleted
+            ? _session.PlaceSymbol(_pageId, _symbol.Definition.Name, "Starter", _symbol.SvgFilePath,
+                _symbol.Definition.Category, result.PinNames, _x, _y, result.Function, result.Location, result.DeviceTag)
+            : _session.PlaceSymbolOnExistingDevice(result.DeviceId, _pageId, _symbol.Definition.Name, "Starter",
+                _symbol.SvgFilePath, _symbol.Definition.Category, result.PinNames, _x, _y);
+
         if (_rotationDegrees != 0 || _mirrored)
             _session.RotatePlacement(placement.Id, _rotationDegrees, _mirrored);
 
         _placementId = placement.Id;
-        _viewModel.AddPlacementToView(placement.Id, placement.DeviceId, _deviceTag, _symbol, _x, _y, _rotationDegrees, _mirrored);
+        _viewModel.AddPlacementToView(placement.Id, placement.DeviceId, result.Function, result.Location, result.DeviceTag,
+            _symbol, _x, _y, _rotationDegrees, _mirrored);
     }
 }

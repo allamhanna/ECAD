@@ -3,8 +3,11 @@ using SkiaSharp;
 namespace Ecad.Rendering.Canvas;
 
 /// <summary>A placement's rendering data — the symbol's SKPicture (parsed once, kept live for the
-/// window's lifetime so rotation/zoom stay crisp, unlike M4's pre-rasterized thumbnails).</summary>
-public sealed record PlacementRenderInfo(long Id, string DeviceTag, double X, double Y, double Width, double Height, int RotationDegrees, bool Mirrored, SKPicture Picture);
+/// window's lifetime so rotation/zoom stay crisp, unlike M4's pre-rasterized thumbnails).
+/// SiblingPageLabels is empty for a single-placement device — cross-reference text (Section 5.4)
+/// only shows up once a Device actually has more than one Placement.</summary>
+public sealed record PlacementRenderInfo(long Id, string DeviceTag, double X, double Y, double Width, double Height,
+    int RotationDegrees, bool Mirrored, SKPicture Picture, IReadOnlyList<string> SiblingPageLabels);
 
 /// <summary>Pure drawing logic for the schematic canvas — no WPF dependency, driven by SchematicPageWindow's PaintSurface handler.</summary>
 public static class SchematicCanvasRenderer
@@ -80,5 +83,13 @@ public static class SchematicCanvasRenderer
         using var textPaint = new SKPaint { Color = SKColors.Black, IsAntialias = true };
         using var font = new SKFont { Size = 12 };
         canvas.DrawText(placement.DeviceTag, (float)screenX, (float)(screenY - 4), font, textPaint);
+
+        if (placement.SiblingPageLabels.Count > 0)
+        {
+            using var crossRefPaint = new SKPaint { Color = SKColors.DarkSlateGray, IsAntialias = true };
+            using var crossRefFont = new SKFont { Size = 9 };
+            var crossRefText = "-> " + string.Join(", ", placement.SiblingPageLabels.Select(label => "Pg " + label));
+            canvas.DrawText(crossRefText, (float)screenX, (float)(screenY + screenHeight + 11), crossRefFont, crossRefPaint);
+        }
     }
 }

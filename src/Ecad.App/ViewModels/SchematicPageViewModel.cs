@@ -71,6 +71,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     {
         _session = session;
         _page = page;
+        _session.PlacementsChanged += OnSessionPlacementsChanged;
 
         var folder = Path.Combine(AppContext.BaseDirectory, "SymbolLibrary");
         var result = SymbolLibraryLoader.LoadFromFolder(folder);
@@ -88,12 +89,15 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
                 PlacementId = placement.PlacementId,
                 DeviceId = placement.DeviceId,
                 DeviceTag = placement.DeviceTag,
+                Function = placement.FunctionSegment,
+                Location = placement.LocationSegment,
                 SymbolName = placement.SymbolName,
                 Picture = GetOrLoadPicture(symbol),
                 X = placement.X,
                 Y = placement.Y,
                 RotationDegrees = placement.RotationDegrees,
                 Mirrored = placement.Mirrored,
+                SiblingPageLabels = placement.Siblings.Select(s => s.PageLabel).ToList(),
             });
         }
     }
@@ -111,7 +115,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     {
         _undoRedo.Undo();
         NotifyUndoRedoChanged();
-        RedrawRequested?.Invoke();
+        RefreshFromSession();
     }
 
     private bool CanUndo() => _undoRedo.CanUndo;
@@ -121,7 +125,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     {
         _undoRedo.Redo();
         NotifyUndoRedoChanged();
-        RedrawRequested?.Invoke();
+        RefreshFromSession();
     }
 
     private bool CanRedo() => _undoRedo.CanRedo;
@@ -166,7 +170,12 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
 
         SelectedPaletteSymbol = null;
 
-        var dialog = new DeviceTagDialog { Owner = OwnerWindow };
+        var existingDevices = _session.GetAllDevices();
+        var suggestedDesignation = _session.SuggestNextDesignation(_page.FunctionSegment, _page.LocationSegment);
+        var dialog = new DeviceTagDialog(existingDevices, _page.FunctionSegment, _page.LocationSegment, suggestedDesignation, IsTagAvailable)
+        {
+            Owner = OwnerWindow,
+        };
         if (dialog.ShowDialog() != true)
         {
             StatusText = "Placement cancelled.";
@@ -177,11 +186,26 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             ? symbol.Definition.ConnectionPoints.Select(cp => cp.Pin).ToList()
             : ["1"];
 
-        _undoRedo.Execute(new PlaceSymbolCommand(_session, this, _page.Id, symbol, pinNames, worldX, worldY, dialog.DeviceTag));
+        if (dialog.SelectedExistingDeviceId is { } existingDeviceId)
+        {
+            var existingDevice = existingDevices.First(d => d.Id == existingDeviceId);
+            _undoRedo.Execute(new AttachPlacementCommand(_session, this, _page.Id, existingDeviceId,
+                existingDevice.FunctionSegment, existingDevice.LocationSegment, existingDevice.DeviceTagSegment, symbol, pinNames, worldX, worldY));
+            StatusText = $"Placed '{symbol.Definition.Name}' on existing device {existingDevice.DeviceTagSegment}.";
+        }
+        else
+        {
+            _undoRedo.Execute(new PlaceSymbolCommand(_session, this, _page.Id, symbol, pinNames, worldX, worldY,
+                dialog.Function, dialog.Location, dialog.Designation));
+            StatusText = $"Placed '{symbol.Definition.Name}' as {dialog.Designation}.";
+        }
+
         NotifyUndoRedoChanged();
-        StatusText = $"Placed '{symbol.Definition.Name}' as {dialog.DeviceTag}.";
-        RedrawRequested?.Invoke();
+        RefreshFromSession();
     }
+
+    private bool IsTagAvailable(string? function, string? location, string designation, long? excludingDeviceId) =>
+        _session.IsTagAvailable(function, location, designation, excludingDeviceId);
 
     /// <summary>Double-click on a placement renames its device tag. Editing the symbol's geometry
     /// itself is the separate symbol editor (deferred to Phase 2, out of scope here).</summary>
@@ -191,14 +215,16 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         if (hit is not { } placementId) return;
 
         var item = Placements.First(p => p.PlacementId == placementId);
-        var dialog = new DeviceTagDialog(item.DeviceTag) { Owner = OwnerWindow };
+        var device = _session.GetDevice(item.DeviceId)!;
+        var dialog = new DeviceTagDialog(device, IsTagAvailable) { Owner = OwnerWindow };
         if (dialog.ShowDialog() != true) return;
 
-        if (dialog.DeviceTag == item.DeviceTag) return;
+        if (dialog.Function == item.Function && dialog.Location == item.Location && dialog.Designation == item.DeviceTag) return;
 
-        _undoRedo.Execute(new RenameTagCommand(_session, this, placementId, item.DeviceId, item.DeviceTag, dialog.DeviceTag));
+        _undoRedo.Execute(new RenameTagCommand(_session, this, placementId, item.DeviceId,
+            item.Function, item.Location, item.DeviceTag, dialog.Function, dialog.Location, dialog.Designation));
         NotifyUndoRedoChanged();
-        StatusText = $"Renamed to {dialog.DeviceTag}.";
+        StatusText = $"Renamed to {dialog.Designation}.";
         RedrawRequested?.Invoke();
     }
 
@@ -286,11 +312,10 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         {
             var item = Placements.First(p => p.PlacementId == deleteId);
             var symbol = _symbolsByName[item.SymbolName];
-            var pinNames = _session.GetDevicePins(item.DeviceId).Select(p => p.Name).ToList();
-            _undoRedo.Execute(new DeleteCommand(_session, this, _page.Id, item, symbol, pinNames));
+            _undoRedo.Execute(new DeleteCommand(_session, this, _page.Id, item, symbol));
             NotifyUndoRedoChanged();
             SelectedPlacementId = null;
-            RedrawRequested?.Invoke();
+            RefreshFromSession();
             return;
         }
 
@@ -306,20 +331,48 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
 
     public IReadOnlyList<PlacementRenderInfo> BuildRenderList() =>
         Placements.Select(p => new PlacementRenderInfo(p.PlacementId, p.DeviceTag, p.X, p.Y,
-            PlacementViewItem.Width, PlacementViewItem.Height, p.RotationDegrees, p.Mirrored, p.Picture)).ToList();
+            PlacementViewItem.Width, PlacementViewItem.Height, p.RotationDegrees, p.Mirrored, p.Picture, p.SiblingPageLabels)).ToList();
 
     private List<HitTestPlacement> BuildHitTestList() =>
         Placements.Select(p => new HitTestPlacement(p.PlacementId, p.X, p.Y,
             PlacementViewItem.Width, PlacementViewItem.Height, p.RotationDegrees)).ToList();
 
-    internal void AddPlacementToView(long placementId, long deviceId, string deviceTag, LoadedSymbol symbol,
-        double x, double y, int rotationDegrees, bool mirrored)
+    /// <summary>
+    /// Fired by ProjectSession.PlacementsChanged when placements are added/removed or a Device is
+    /// renamed anywhere in the project — including from a different, simultaneously-open
+    /// SchematicPageWindow for another page of the same multi-placement Device. Without this, this
+    /// page's cross-reference text and tags would only ever reflect changes made in THIS window.
+    /// </summary>
+    private void OnSessionPlacementsChanged() => RefreshFromSession();
+
+    /// <summary>Re-queries this page's placements from the DB and syncs each surviving view item's
+    /// tag/segments/sibling labels (Section 5.4) — not position/rotation, which only ever change via
+    /// this window's own Move/Rotate commands. Called after any local place/attach/delete/rename, on
+    /// undo/redo, and whenever ProjectSession.PlacementsChanged fires from elsewhere.</summary>
+    private void RefreshFromSession()
+    {
+        var fresh = _session.GetPlacements(_page.Id).ToDictionary(p => p.PlacementId, p => p);
+        foreach (var item in Placements)
+        {
+            if (!fresh.TryGetValue(item.PlacementId, out var placement)) continue;
+            item.DeviceTag = placement.DeviceTag;
+            item.Function = placement.FunctionSegment;
+            item.Location = placement.LocationSegment;
+            item.SiblingPageLabels = placement.Siblings.Select(s => s.PageLabel).ToList();
+        }
+        RedrawRequested?.Invoke();
+    }
+
+    internal void AddPlacementToView(long placementId, long deviceId, string? function, string? location, string deviceTag,
+        LoadedSymbol symbol, double x, double y, int rotationDegrees, bool mirrored)
     {
         Placements.Add(new PlacementViewItem
         {
             PlacementId = placementId,
             DeviceId = deviceId,
             DeviceTag = deviceTag,
+            Function = function,
+            Location = location,
             SymbolName = symbol.Definition.Name,
             Picture = GetOrLoadPicture(symbol),
             X = x,
@@ -349,9 +402,11 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         item.Mirrored = mirrored;
     }
 
-    internal void UpdatePlacementTag(long placementId, string deviceTag)
+    internal void UpdatePlacementTag(long placementId, string? function, string? location, string deviceTag)
     {
         var item = Placements.First(p => p.PlacementId == placementId);
+        item.Function = function;
+        item.Location = location;
         item.DeviceTag = deviceTag;
     }
 
@@ -368,6 +423,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _session.PlacementsChanged -= OnSessionPlacementsChanged;
         foreach (var svg in _svgCache.Values) svg.Dispose();
         _svgCache.Clear();
     }

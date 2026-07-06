@@ -6,6 +6,8 @@ public class PlacementWithSymbol
     public long PlacementId { get; set; }
     public long DeviceId { get; set; }
     public string DeviceTag { get; set; } = string.Empty;
+    public string? FunctionSegment { get; set; }
+    public string? LocationSegment { get; set; }
     public long PageId { get; set; }
     public double X { get; set; }
     public double Y { get; set; }
@@ -13,4 +15,5 @@ public class PlacementWithSymbol
     public bool Mirrored { get; set; }
     public string SymbolName { get; set; } = string.Empty;
     public string? SymbolSvgFilePath { get; set; }
+    public IReadOnlyList<SiblingPlacementRef> Siblings { get; set; } = [];
 }

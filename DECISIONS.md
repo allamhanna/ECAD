@@ -162,3 +162,29 @@ The M1 schema cascades a `Device` delete through `DevicePin`/`Placement`/`Placem
 - `SKElement.IgnorePixelScaling="True"` is now the standard setting for any future interactive Skia canvas in this app — without it, correctness of mouse-driven interaction depends on the display's DPI scaling being exactly 100%.
 
 ---
+
+## ADR-008: M6 Device Tagging & Cross-References — Simple Auto-Numbering, Placement-Level Deletion, Cross-Window Live Sync
+
+**Status:** Accepted (2026-07-06)
+
+**Context:**
+M6 is the first milestone to actually exercise the multi-placement-device design M1 built ahead of need (no unique constraint on `Placement.DeviceId`, `PlacementPin` as "the cross-reference mechanism," `PlacementRepository.GetSiblingPlacementIds` proven only by a from-scratch repository test). It replaces M5's 1-device-1-placement application-layer assumption with real support for attaching a new Placement to an existing Device, segment-aware IEC 81346 tag editing, and live cross-reference display between sibling placements.
+
+**Decision — auto-suggested Designation is a plain sequential number, not a numbering engine:**
+Requirements 6.1 asks for "auto-assign tag using page's Function+Location context" but explicitly defers "rule-based numbering schemes (configurable)" to Phase 2, and never specifies an actual algorithm (letter-code-per-symbol-kind, padding, reuse-after-delete, etc.). `DeviceRepository.SuggestNextDesignation` does the simplest thing that satisfies the stated requirement: scan existing Devices sharing the same Function+Location, extract the highest trailing integer from their `DeviceTagSegment`, suggest `+1` (or `1`). It's a starting point the user freely overwrites in the Designation field (e.g. typing `K1` instead of accepting `1`) — no symbol-kind-to-IEC-letter inference exists anywhere in the symbol metadata, and inventing one now would be exactly the kind of scope creep the M5 milestone-scope-discipline lesson warns against.
+
+**Decision — deletion and its undo became placement-level, not device-level:**
+M5's `DeletePlacement` always deleted the whole Device, correct only because M5 had no multi-placement devices. M6's version: delete the DevicePins referenced *only* by the placement being removed (leaving a sibling placement's pins alone), delete the Placement, then delete the Device too only if it has no placements left. The result (`PlacementDeletionResult`) tells `DeleteCommand.Undo()` which branch to take — recreate a whole new Device (ADR-007's original recreate-not-restore strategy, unchanged for the single-placement case) or just a new Placement on the Device that's still there.
+
+**Decision — cross-reference "live" means genuinely live, across every open window, via a shared-session event:**
+The first design draft scoped "live" to just the page window where a change happened, planning to document cross-window staleness as an accepted limitation. Live user testing immediately surfaced this as actually wrong, not an acceptable trade-off — deleting a contact placement on one open page window left a stale cross-reference on another already-open window for the coil's page. Since every `SchematicPageWindow` for a project already shares one `ProjectSession` instance, the fix is a plain `ProjectSession.PlacementsChanged` event raised after any placement add/attach/delete or device rename; every `SchematicPageViewModel` subscribes in its constructor and unsubscribes in `Dispose()`, re-syncing its own page's tags and sibling labels from the DB whenever it fires. No message bus or WPF dependency needed — it's a plain C# event on an object every consumer already holds a reference to.
+
+**Consequence — a new Dapper materialization gotcha found (extends ADR-002):**
+`PlacementRepository.GetSiblingPlacementRefs`'s first version selected a `COALESCE(pg.PageNumberSegment, '#' || p2.PageId)` computed column straight into the `SiblingPlacementRef` record. This failed for the common zero-sibling case with "a constructor matching `(long, long, byte[])` is required" — Dapper generates its deserializer from the reader's column schema before checking whether any rows exist, and Microsoft.Data.Sqlite can't resolve a concrete CLR type for a computed expression column without an actual row to inspect, apparently defaulting to blob. Fixed the same way ADR-002 recommends for constructor-strict record types: query into a plain settable-property row class instead (lenient mapping tolerates the ambiguous schema), and build the label string in C# after the fact rather than in SQL.
+
+**Consequences:**
+- `Device.PartId` remains unused — Part assignment to a Device was explicitly confirmed out of scope for M6 (likely M8 or its own slice).
+- The "column" component of "page/column references" (Section 5.4) isn't implemented — no title-block/frame grid model exists yet to give "column" meaning; cross-references show page number only.
+- Any future cross-window "live" feature (e.g. M7's connection routing, or the EPLAN-style "interruption point" jump-navigation the user asked about right after M6) should reach for the same `ProjectSession`-event pattern rather than re-deriving one.
+
+---

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Dapper;
 using Ecad.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -39,14 +40,57 @@ public class DeviceRepository(SqliteConnection connection)
     }
 
     /// <summary>Deletes the Device row; DevicePin/Placement/PlacementPin all cascade per the M1 schema.
-    /// Safe in M5 because each Device has exactly one Placement (multi-placement devices are M6).</summary>
+    /// Callers (ProjectSession.DeletePlacement, M6) only call this once a Device has no Placements left.</summary>
     public void DeleteDevice(long deviceId)
     {
         connection.Execute("DELETE FROM Device WHERE Id = @deviceId;", new { deviceId });
     }
 
-    public void UpdateDeviceTag(long deviceId, string deviceTag)
+    public void UpdateDeviceTag(long deviceId, string? function, string? location, string deviceTag)
     {
-        connection.Execute("UPDATE Device SET DeviceTagSegment = @deviceTag WHERE Id = @deviceId;", new { deviceId, deviceTag });
+        connection.Execute(
+            "UPDATE Device SET FunctionSegment = @function, LocationSegment = @location, DeviceTagSegment = @deviceTag WHERE Id = @deviceId;",
+            new { deviceId, function, location, deviceTag });
+    }
+
+    public IReadOnlyList<Device> GetAllDevices(long projectId)
+    {
+        return connection.Query<Device>("SELECT * FROM Device WHERE ProjectId = @projectId ORDER BY Id;", new { projectId }).ToList();
+    }
+
+    /// <summary>Exact-match lookup for tag-uniqueness checks (Section 6.1: "tag uniqueness enforced per project"). Excludes a given Device (for rename-in-place).</summary>
+    public Device? FindByTag(long projectId, string? function, string? location, string deviceTag, long? excludingDeviceId)
+    {
+        return connection.QuerySingleOrDefault<Device>(
+            """
+            SELECT * FROM Device
+            WHERE ProjectId = @projectId
+              AND DeviceTagSegment = @deviceTag
+              AND FunctionSegment IS @function
+              AND LocationSegment IS @location
+              AND (@excludingDeviceId IS NULL OR Id != @excludingDeviceId)
+            LIMIT 1;
+            """,
+            new { projectId, function, location, deviceTag, excludingDeviceId });
+    }
+
+    /// <summary>
+    /// Simple sequential suggestion for a new Device's Designation within a Function+Location scope:
+    /// the highest trailing integer among existing tags in that scope, plus one (or 1 if none). Not a
+    /// configurable numbering scheme (see ADR-008) — just a starting point the user can freely edit.
+    /// </summary>
+    public string SuggestNextDesignation(long projectId, string? function, string? location)
+    {
+        var existingTags = connection.Query<string>(
+            "SELECT DeviceTagSegment FROM Device WHERE ProjectId = @projectId AND FunctionSegment IS @function AND LocationSegment IS @location;",
+            new { projectId, function, location });
+
+        var maxNumber = 0;
+        foreach (var tag in existingTags)
+        {
+            var match = Regex.Match(tag, @"(\d+)$");
+            if (match.Success && int.Parse(match.Value) > maxNumber) maxNumber = int.Parse(match.Value);
+        }
+        return (maxNumber + 1).ToString();
     }
 }

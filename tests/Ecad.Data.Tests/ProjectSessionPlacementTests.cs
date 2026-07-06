@@ -13,7 +13,7 @@ public class ProjectSessionPlacementTests
         var page = session.AddPage(new Page { PageNumberSegment = "1" });
 
         var placement = session.PlaceSymbol(page.Id, "RelayCoil", "Starter", "SymbolLibrary/RelayCoil.svg", "Coils",
-            pinNames: ["A1", "A2"], x: 100, y: 200, deviceTag: "K1");
+            pinNames: ["A1", "A2"], x: 100, y: 200, function: null, location: null, deviceTag: "K1");
 
         Assert.True(placement.Id > 0);
         Assert.Equal(100, placement.X);
@@ -35,7 +35,7 @@ public class ProjectSessionPlacementTests
         using var file = new TempSqliteFile();
         using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
         var page = session.AddPage(new Page { PageNumberSegment = "1" });
-        var placement = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, "X1");
+        var placement = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, null, null, "X1");
 
         session.MovePlacement(placement.Id, 50, 75);
 
@@ -50,7 +50,7 @@ public class ProjectSessionPlacementTests
         using var file = new TempSqliteFile();
         using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
         var page = session.AddPage(new Page { PageNumberSegment = "1" });
-        var placement = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, "X1");
+        var placement = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, null, null, "X1");
 
         session.RotatePlacement(placement.Id, 90, mirrored: true);
 
@@ -65,7 +65,7 @@ public class ProjectSessionPlacementTests
         using var file = new TempSqliteFile();
         using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
         var page = session.AddPage(new Page { PageNumberSegment = "1" });
-        var placement = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, "X1");
+        var placement = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, null, null, "X1");
 
         session.DeletePlacement(placement.Id);
 
@@ -79,8 +79,8 @@ public class ProjectSessionPlacementTests
         using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
         var page = session.AddPage(new Page { PageNumberSegment = "1" });
 
-        var first = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, "X1");
-        var second = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 40, 0, "X2");
+        var first = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 0, 0, null, null, "X1");
+        var second = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1", "2"], 40, 0, null, null, "X2");
 
         Assert.Equal(2, session.GetPlacements(page.Id).Count);
         // Both placements should reference the same underlying Symbol row (verified indirectly:
