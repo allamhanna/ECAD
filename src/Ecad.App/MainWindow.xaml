@@ -35,7 +35,7 @@
                 <TextBlock Text="Pages" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0"/>
                 <Button Content="Add Page..." Command="{Binding AddPageCommand}" Padding="8,2"/>
             </StackPanel>
-            <ListView ItemsSource="{Binding Pages}" Margin="8">
+            <ListView ItemsSource="{Binding Pages}" Margin="8" MouseDoubleClick="OnPagesDoubleClick">
                 <ListView.View>
                     <GridView>
                         <GridViewColumn Header="Function" Width="100" DisplayMemberBinding="{Binding FunctionSegment}"/>

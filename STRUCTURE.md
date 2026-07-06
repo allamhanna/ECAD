@@ -2,7 +2,7 @@
 
 This file describes the actual folder/solution layout as it exists, kept in sync as the project is built. See `DECISIONS.md` ADR-001 for the stack rationale and `PROGRESS.md` for what's built vs planned.
 
-## Current layout (as of M4 — Symbol format & starter set — complete)
+## Current layout (as of M5 — Schematic canvas core — complete)
 
 ```
 electrical CAD/
@@ -15,23 +15,40 @@ electrical CAD/
   src/
     Ecad.App/              WPF startup project (net8.0-windows)
       App.xaml.cs           global DispatcherUnhandledException handler (shows a message box)
+      Canvas/                PlacementViewItem (mutable live-canvas placement: position/rotation/tag +
+                             cached SKPicture), Commands.cs (IUndoableCommand implementations:
+                             PlaceSymbolCommand, MoveCommand, RotateCommand, RenameTagCommand,
+                             DeleteCommand — see ADR-007 for the undo-of-delete recreate design)
       ViewModels/           MainViewModel (CommunityToolkit.Mvvm ObservableObject + RelayCommands:
                              NewProject, OpenProject, Save, SaveAs, CloseProject, AddPage,
-                             ImportEplanPartsAsync, OpenPartsLibrary, Exit)
+                             ImportEplanPartsAsync, OpenPartsLibrary, OpenSymbolBrowser, Exit;
+                             + OpenPage(Page) launches SchematicPageWindow)
                              PartsLibraryViewModel — owns its own Library DB connection, search/filter
                              over all Parts + detail lookups (PinTemplates/TerminalSpecs/Accessories/
                              PreviewImage, the last built as a frozen BitmapImage from the cached BLOB)
+                             SchematicPageViewModel — owns a page's CanvasViewport/Placements/
+                             UndoRedoStack; translates raw mouse/keyboard input (reported by
+                             SchematicPageWindow's code-behind) into IUndoableCommand executions;
+                             caches loaded SKSvg per symbol name (IDisposable — see ADR-007)
       Views/                NewProjectDialog, AddPageDialog — plain code-behind modal dialogs
                              PartsLibraryWindow — non-modal, master-detail parts browser (read-only),
                              detail panel includes an Image control bound to PreviewImage
                              SymbolBrowserViewModel — loads SymbolLibrary/ via SymbolLibraryLoader,
                              rasterizes each via SymbolRasterizer, exposes thumbnails
                              SymbolBrowserWindow — non-modal, wrapped thumbnail grid (read-only)
+                             DeviceTagDialog — minimal single-field dialog, reused for both initial
+                             placement and renaming an existing placement's tag
+                             SchematicPageWindow — non-modal per-page canvas: SKElement (first
+                             interactive use of SkiaSharp.Views.WPF, IgnorePixelScaling="True" per
+                             ADR-007) + a palette sidebar of the M4 starter symbols; mouse/keyboard
+                             events are translated to SchematicPageViewModel calls, nothing else
+                             lives in the code-behind
       SymbolLibrary/         8 starter IEC-style symbols: RelayCoil, ContactNO, ContactNC, Terminal,
                              Motor3Phase, PushbuttonNO, Fuse, Lamp — each a plain .svg + .symbol.json
                              sidecar (see ADR-006), Content/CopyToOutputDirectory
-      MainWindow.xaml(.cs)  File menu, page ListView (Function/Location/DocType/PageNumber/Type columns),
-                             status bar; DataContext = MainViewModel
+      MainWindow.xaml(.cs)  File menu, page ListView (Function/Location/DocType/PageNumber/Type columns,
+                             double-click a row to open SchematicPageWindow), status bar;
+                             DataContext = MainViewModel
     Ecad.Core/             domain models & business logic (net8.0, no UI/storage deps)
       Models/              Project, Page, Device, DevicePin, Placement, PlacementPin, Connection, ConnectionEnd,
                             Cable, CableCore, Part, PartPinTemplate, PartTerminalSpec, PartAccessory, PartImage,
@@ -51,17 +68,23 @@ electrical CAD/
       ProjectSession.cs     Create/Open a .ecad file, holds CurrentProject + Pages, AddPage, Checkpoint
                              (File > Save), SaveAs (checkpoint + file copy + reopen on new path),
                              Dispose — the testable core behind Ecad.App's MainViewModel
-      Repositories/         ProjectRepository (+ GetFirstProject, GetPages), DeviceRepository,
-                             PlacementRepository (+ cross-reference query), ConnectionRepository,
-                             CableRepository, PartRepository (+ upsert-by-ExternalKey, Replace*
-                             child-row helpers, GetOrCreateOrganization, GetAllParts,
-                             GetAllOrganizations, GetImage, UpsertImage), UdpRepository
-                             — Dapper on top of Microsoft.Data.Sqlite
+      Repositories/         ProjectRepository (+ GetFirstProject, GetPages), DeviceRepository
+                             (+ DeleteDevice, UpdateDeviceTag), PlacementRepository (+ cross-reference
+                             query, GetOrCreateSymbol, UpdatePosition, UpdateRotation,
+                             GetPlacementsForPage), ConnectionRepository, CableRepository,
+                             PartRepository (+ upsert-by-ExternalKey, Replace* child-row helpers,
+                             GetOrCreateOrganization, GetAllParts, GetAllOrganizations, GetImage,
+                             UpsertImage), UdpRepository — Dapper on top of Microsoft.Data.Sqlite
       Import/EplanEdzImporter.cs   parses a real EPLAN .edz (7z, read via SharpCompress) into the
                              Library DB — see ADR-004 for format quirks this handles, ADR-005 for
                              the unconditional (Added/Updated/Unchanged-independent) image backfill
       Import/EplanImportResult.cs  counts + warnings returned to the caller
     Ecad.Rendering/        canvas + SVG symbol rendering (net8.0-windows, UseWPF)
+      Canvas/CanvasViewport.cs         pan/zoom/grid-spacing state + WorldToScreen/ScreenToWorld/SnapToGrid
+      Canvas/PlacementHitTester.cs     rotation-aware topmost-hit test over a placement list
+      Canvas/UndoRedoStack.cs          generic IUndoableCommand push/undo/redo, no WPF/Ecad.Data dependency
+      Canvas/SchematicCanvasRenderer.cs  pure SkiaSharp draw: grid, each placement (rotated/mirrored/
+                             scaled to its world footprint), selection highlight, device tag text
       Symbols/SymbolDefinition.cs      ConnectionPoint/TextPlaceholder/Variant POCOs + JSON (de)serialization
       Symbols/SymbolLibraryLoader.cs   scans a folder for *.symbol.json + matching .svg (see ADR-006)
       Symbols/SymbolRasterizer.cs      SkiaSharp + Svg.Skia: SVG bytes -> PNG byte array (no WPF dependency)
@@ -69,10 +92,12 @@ electrical CAD/
   tests/
     Ecad.Core.Tests/       DeviceTagTests, PageTagTests (8 tests)
     Ecad.Data.Tests/       MigrationTests, ProjectSchemaTests, PartUpsertTests, ProjectSessionTests,
+                           ProjectSessionPlacementTests (PlaceSymbol/Move/Rotate/Delete, symbol reuse),
                            EplanEdzImporterTests (synthetic zip fixtures, see ADR-004/ADR-005),
-                           TempSqliteFile helper (29 tests)
-    Ecad.Rendering.Tests/  SymbolLibraryLoaderTests, SymbolRasterizerTests, TempDirectory helper
-                           (net8.0-windows, matching Ecad.Rendering's TFM) (6 tests)
+                           TempSqliteFile helper (34 tests)
+    Ecad.Rendering.Tests/  SymbolLibraryLoaderTests, SymbolRasterizerTests, CanvasViewportTests,
+                           PlacementHitTesterTests, UndoRedoStackTests, TempDirectory helper
+                           (net8.0-windows, matching Ecad.Rendering's TFM) (22 tests)
 ```
 
 Note: `Ecad.Rendering` targets `net8.0-windows` with `UseWPF=true` (not plain `net8.0`) because `SkiaSharp.Views.WPF` needs the WPF/Windows target framework to compile.
@@ -81,6 +106,6 @@ Dependency direction: `Ecad.App` depends on `Ecad.Core`, `Ecad.Data`, `Ecad.Rend
 
 Two SQLite databases per ADR-003: a per-project file (Project DB) and a shared `library.db` (Library DB). The `Part`/`PartPinTemplate`/`PartTerminalSpec`/`PartAccessory` tables exist with identical DDL in both — the Project DB's copy is a local cache populated when a Device first references a library Part, so a project file stays portable on its own.
 
-Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 43 tests passing across four test projects. Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. Verified `SymbolLibrary/*` files actually land in the build output directory (`bin/Debug/net8.0-windows/SymbolLibrary/`). The Parts Library and Symbol Browser windows' visual/interactive behavior is pending a user click-through.
+Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 64 tests passing across three test projects (Core 8, Data 34, Rendering 22). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. Verified `SymbolLibrary/*` files actually land in the build output directory (`bin/Debug/net8.0-windows/SymbolLibrary/`). The Parts Library and Symbol Browser windows' visual/interactive behavior is pending a user click-through. The M5 schematic canvas (place/select/drag/rotate/rename/delete/undo/redo) was click-tested live by the user end-to-end, including two real bugs found and fixed along the way — see ADR-007.
 
-This section will be updated with real detail as each milestone lands — next up: M5 (schematic canvas), to be decided with the user.
+This section will be updated with real detail as each milestone lands — next up: M6 (device tagging & cross-references) or M7 (auto-connect wiring), to be decided with the user.

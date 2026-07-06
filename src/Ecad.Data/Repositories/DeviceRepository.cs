@@ -37,4 +37,16 @@ public class DeviceRepository(SqliteConnection connection)
     {
         return connection.Query<DevicePin>("SELECT * FROM DevicePin WHERE DeviceId = @deviceId;", new { deviceId }).ToList();
     }
+
+    /// <summary>Deletes the Device row; DevicePin/Placement/PlacementPin all cascade per the M1 schema.
+    /// Safe in M5 because each Device has exactly one Placement (multi-placement devices are M6).</summary>
+    public void DeleteDevice(long deviceId)
+    {
+        connection.Execute("DELETE FROM Device WHERE Id = @deviceId;", new { deviceId });
+    }
+
+    public void UpdateDeviceTag(long deviceId, string deviceTag)
+    {
+        connection.Execute("UPDATE Device SET DeviceTagSegment = @deviceTag WHERE Id = @deviceId;", new { deviceId, deviceTag });
+    }
 }

@@ -17,6 +17,15 @@ public class PlacementRepository(SqliteConnection connection)
             symbol);
     }
 
+    /// <summary>Looks up a Symbol by name in this database, inserting it if missing. The M1 Symbol table stays otherwise unused until a Placement is actually created (ADR-006).</summary>
+    public long GetOrCreateSymbol(string name, string? libraryName, string? svgFilePath, string? category)
+    {
+        var existingId = connection.QuerySingleOrDefault<long?>("SELECT Id FROM Symbol WHERE Name = @name;", new { name });
+        if (existingId is not null) return existingId.Value;
+
+        return InsertSymbol(new Symbol { Name = name, LibraryName = libraryName, SvgFilePath = svgFilePath, Category = category });
+    }
+
     public long InsertPlacement(Placement placement)
     {
         return connection.ExecuteScalar<long>(
@@ -31,6 +40,35 @@ public class PlacementRepository(SqliteConnection connection)
     public Placement? GetPlacement(long id)
     {
         return connection.QuerySingleOrDefault<Placement>("SELECT * FROM Placement WHERE Id = @id;", new { id });
+    }
+
+    public void UpdatePosition(long placementId, double x, double y)
+    {
+        connection.Execute("UPDATE Placement SET X = @x, Y = @y WHERE Id = @placementId;", new { placementId, x, y });
+    }
+
+    public void UpdateRotation(long placementId, int rotationDegrees, bool mirrored)
+    {
+        connection.Execute(
+            "UPDATE Placement SET RotationDegrees = @rotationDegrees, Mirrored = @mirrored WHERE Id = @placementId;",
+            new { placementId, rotationDegrees, mirrored });
+    }
+
+    /// <summary>All placements on a page, joined with their Device tag and Symbol info — everything the canvas needs to render the page.</summary>
+    public IReadOnlyList<PlacementWithSymbol> GetPlacementsForPage(long pageId)
+    {
+        return connection.Query<PlacementWithSymbol>(
+            """
+            SELECT p.Id AS PlacementId, p.DeviceId, d.DeviceTagSegment AS DeviceTag, p.PageId,
+                   p.X, p.Y, p.RotationDegrees, p.Mirrored,
+                   s.Name AS SymbolName, s.SvgFilePath AS SymbolSvgFilePath
+            FROM Placement p
+            JOIN Device d ON d.Id = p.DeviceId
+            JOIN Symbol s ON s.Id = p.SymbolId
+            WHERE p.PageId = @pageId
+            ORDER BY p.Id;
+            """,
+            new { pageId }).ToList();
     }
 
     public long AddPlacementPin(long placementId, long devicePinId)

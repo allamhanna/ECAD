@@ -1,5 +1,8 @@
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
 using Ecad.App.ViewModels;
+using Page = Ecad.Core.Models.Page;
 
 namespace Ecad.App;
 
@@ -18,5 +21,13 @@ public partial class MainWindow : Window
     {
         (DataContext as IDisposable)?.Dispose();
         base.OnClosed(e);
+    }
+
+    private void OnPagesDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel && ((ListView)sender).SelectedItem is Page page)
+        {
+            viewModel.OpenPage(page);
+        }
     }
 }

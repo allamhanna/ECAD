@@ -141,3 +141,24 @@ M1 deliberately left `Ecad.Core.Models.Symbol` minimal, deferring the actual SVG
 - Symbol placement, rotation/mirror application, and connection-point-driven wiring are explicitly out of scope here — that's M5 (canvas) and M6 (device tagging/cross-references).
 
 ---
+
+## ADR-007: M5 Schematic Canvas — Undo-of-Delete Recreates Rather Than Restores; Two Real-Bug Fixes
+
+**Status:** Accepted (2026-07-06)
+
+**Context:**
+M5 is the first milestone to use `SkiaSharp.Views.WPF`'s interactive `SKElement` (M4 only ever rasterized static thumbnails, per ADR-006) and the first to give the undo/redo framework real commands to drive: placing, moving, rotating, renaming, and deleting a `Placement`.
+
+**Decision — undo-of-delete is a recreate, not a restore:**
+The M1 schema cascades a `Device` delete through `DevicePin`/`Placement`/`PlacementPin` (`ON DELETE CASCADE`), so by the time `DeleteCommand.Do()` returns there is nothing left in the database to "undelete" by ID. `DeleteCommand.Undo()` instead calls `ProjectSession.PlaceSymbol` again with the deleted placement's captured symbol/tag/position/rotation, producing a new `Device`/`Placement` with new row IDs that is visually and functionally identical. This is simpler than adding soft-delete or ID-preserving restore logic to the schema, and the row IDs themselves aren't user-visible anywhere yet.
+
+**Two real bugs found via live user testing (not caught by the 64 automated tests, since both are runtime/rendering concerns automated tests don't exercise):**
+1. **`AccessViolationException` crash on the first repaint after placing a symbol.** `SchematicPageViewModel` originally loaded each symbol's SVG via `using var svg = new SKSvg(); ... return svg.Load(stream);` — disposing the `SKSvg` at the end of the method. `SKSvg.Dispose()` also frees its `Picture`'s native memory, so the returned `SKPicture` (cached for reuse across repaints) pointed at freed memory the moment the method returned; the next call to `SKPicture.CullRect` during rendering read that freed memory and crashed the whole process. Fixed by caching the `SKSvg` instances themselves (kept alive for the `SchematicPageViewModel`'s lifetime, disposed together with it) rather than just their `Picture`.
+2. **Placed symbols couldn't be reliably selected or dragged afterward.** `SKElement.PaintSurface` reports its canvas size in physical pixels (`SKImageInfo.Width/Height` scaled by the display's DPI), while WPF mouse events (`MouseEventArgs.GetPosition`) report DIP/logical coordinates. On any display with scaling ≠ 100%, a placement rendered at a pixel position that didn't correspond 1:1 to the DIP coordinates used for hit-testing, so a placement could render visibly off from where it was actually stored — clicking on what looked like the symbol missed its hit-test box. Fixed by setting `SKElement.IgnorePixelScaling = "True"` (confirmed the property exists and its effect via a throwaway reflection probe against the real `SkiaSharp.Views.WPF.SKElement` type before applying it, per the "verify third-party APIs before use" habit from M3/M4).
+
+**Consequences:**
+- Any future code that loads an SVG via `Svg.Skia`'s `SKSvg` and needs the resulting `SKPicture` to outlive the method that loaded it must keep the `SKSvg` instance alive too — this is now a known gotcha, not just fixed in one place.
+- `SchematicPageViewModel` implements `IDisposable` (disposing its cached `SKSvg`s); `SchematicPageWindow.OnClosed` disposes it. This is the first `Ecad.App` ViewModel with this shape besides `MainViewModel`.
+- `SKElement.IgnorePixelScaling="True"` is now the standard setting for any future interactive Skia canvas in this app — without it, correctness of mouse-driven interaction depends on the display's DPI scaling being exactly 100%.
+
+---

@@ -13,6 +13,8 @@ public sealed class ProjectSession : IDisposable
 {
     private readonly SqliteConnection _connection;
     private readonly ProjectRepository _projects;
+    private readonly PlacementRepository _placements;
+    private readonly DeviceRepository _devices;
     private readonly List<Page> _pages;
 
     private ProjectSession(string filePath, SqliteConnection connection, Project project, List<Page> pages)
@@ -20,6 +22,8 @@ public sealed class ProjectSession : IDisposable
         FilePath = filePath;
         _connection = connection;
         _projects = new ProjectRepository(connection);
+        _placements = new PlacementRepository(connection);
+        _devices = new DeviceRepository(connection);
         CurrentProject = project;
         _pages = pages;
     }
@@ -92,6 +96,54 @@ public sealed class ProjectSession : IDisposable
         File.Copy(FilePath, newFilePath, overwrite: true);
         return Open(newFilePath);
     }
+
+    /// <summary>
+    /// Places a symbol on a page: creates a Device (one placement per device in M5 — multi-placement
+    /// devices are M6), a DevicePin per pin name, the Placement, and a PlacementPin per DevicePin.
+    /// Also the first real writer to this project's Symbol table (ADR-006 left it unpopulated until
+    /// a Placement actually needed a row to reference). Not wrapped in an explicit transaction —
+    /// consistent with the rest of the codebase's per-statement-commit style for simple, fast writes.
+    /// </summary>
+    public Placement PlaceSymbol(long pageId, string symbolName, string? symbolLibraryName, string? symbolSvgFilePath,
+        string? symbolCategory, IReadOnlyList<string> pinNames, double x, double y, string deviceTag)
+    {
+        var symbolId = _placements.GetOrCreateSymbol(symbolName, symbolLibraryName, symbolSvgFilePath, symbolCategory);
+
+        var deviceId = _devices.InsertDevice(new Device { ProjectId = CurrentProject.Id, DeviceTagSegment = deviceTag });
+
+        var devicePinIds = new List<long>();
+        foreach (var pinName in pinNames)
+            devicePinIds.Add(_devices.InsertDevicePin(new DevicePin { DeviceId = deviceId, Name = pinName }));
+
+        var placement = new Placement { DeviceId = deviceId, PageId = pageId, SymbolId = symbolId, X = x, Y = y };
+        placement.Id = _placements.InsertPlacement(placement);
+
+        foreach (var devicePinId in devicePinIds)
+            _placements.AddPlacementPin(placement.Id, devicePinId);
+
+        return placement;
+    }
+
+    public void RenameDevice(long deviceId, string deviceTag) => _devices.UpdateDeviceTag(deviceId, deviceTag);
+
+    public void MovePlacement(long placementId, double x, double y) => _placements.UpdatePosition(placementId, x, y);
+
+    public void RotatePlacement(long placementId, int rotationDegrees, bool mirrored) =>
+        _placements.UpdateRotation(placementId, rotationDegrees, mirrored);
+
+    /// <summary>Deletes the placement's Device row; DevicePin/Placement/PlacementPin cascade per the M1 schema.</summary>
+    public void DeletePlacement(long placementId)
+    {
+        var placement = _placements.GetPlacement(placementId)
+            ?? throw new InvalidOperationException($"Placement {placementId} not found.");
+        _devices.DeleteDevice(placement.DeviceId);
+    }
+
+    public IReadOnlyList<PlacementWithSymbol> GetPlacements(long pageId) => _placements.GetPlacementsForPage(pageId);
+
+    public Device? GetDevice(long deviceId) => _devices.GetDevice(deviceId);
+
+    public IReadOnlyList<DevicePin> GetDevicePins(long deviceId) => _devices.GetDevicePins(deviceId);
 
     public void Dispose() => _connection.Dispose();
 }
