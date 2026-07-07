@@ -42,7 +42,7 @@ public partial class SchematicPageWindow : Window
     private void OnPaintSurface(object? sender, SKPaintSurfaceEventArgs e)
     {
         SchematicCanvasRenderer.Render(e.Surface.Canvas, _viewModel.Viewport, e.Info.Width, e.Info.Height,
-            _viewModel.BuildRenderList(), _viewModel.SelectedPlacementId);
+            _viewModel.BuildRenderList(), _viewModel.SelectedPlacementId, _viewModel.BuildWiringRenderInfo());
     }
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)

@@ -13,7 +13,8 @@
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
             <Button Content="Undo" Command="{Binding UndoCommand}" Padding="8,2" Margin="0,0,8,0"/>
             <Button Content="Redo" Command="{Binding RedoCommand}" Padding="8,2" Margin="0,0,8,0"/>
-            <TextBlock Text="Click a symbol to place it. Drag to move. R to rotate, Delete to remove, right-drag to pan, wheel to zoom."
+            <Button Content="Renumber Wires" Command="{Binding RenumberWiresCommand}" Padding="8,2" Margin="0,0,8,0"/>
+            <TextBlock Text="Click a symbol to place it, or a pin to draw a wire. Drag to move. R to rotate, Delete to remove, right-drag to pan, wheel to zoom."
                        VerticalAlignment="Center" Foreground="Gray" Margin="8,0,0,0"/>
         </StackPanel>
 

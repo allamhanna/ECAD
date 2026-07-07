@@ -124,6 +124,20 @@ public class PlacementRepository(SqliteConnection connection)
             new { placementId }).ToList();
     }
 
+    /// <summary>The DevicePins this placement exposes (id + name) — lets the canvas resolve each pin's world position via the symbol's matching-named connection point, without a further round-trip.</summary>
+    public IReadOnlyList<PlacementPinInfo> GetPlacementPins(long placementId)
+    {
+        return connection.Query<PlacementPinInfo>(
+            """
+            SELECT dp.Id AS DevicePinId, dp.Name
+            FROM PlacementPin pp
+            JOIN DevicePin dp ON dp.Id = pp.DevicePinId
+            WHERE pp.PlacementId = @placementId
+            ORDER BY pp.Id;
+            """,
+            new { placementId }).ToList();
+    }
+
     public int CountPlacementsForDevice(long deviceId)
     {
         return connection.ExecuteScalar<int>("SELECT COUNT(*) FROM Placement WHERE DeviceId = @deviceId;", new { deviceId });

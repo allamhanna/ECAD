@@ -20,6 +20,9 @@ internal sealed class PlaceSymbolCommand : IUndoableCommand
     private readonly string _deviceTag;
     private long _placementId;
 
+    /// <summary>The Placement this command created — read by the ViewModel right after Execute to run auto-connect (M7).</summary>
+    public long PlacementId => _placementId;
+
     public PlaceSymbolCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId,
         LoadedSymbol symbol, IReadOnlyList<string> pinNames, double x, double y,
         string? function, string? location, string deviceTag)
@@ -70,6 +73,8 @@ internal sealed class AttachPlacementCommand : IUndoableCommand
     private readonly double _x;
     private readonly double _y;
     private long _placementId;
+
+    public long PlacementId => _placementId;
 
     public AttachPlacementCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId, long deviceId,
         string? function, string? location, string deviceTag, LoadedSymbol symbol, IReadOnlyList<string> pinNames, double x, double y)
@@ -208,5 +213,103 @@ internal sealed class DeleteCommand : IUndoableCommand
         _placementId = placement.Id;
         _viewModel.AddPlacementToView(placement.Id, placement.DeviceId, result.Function, result.Location, result.DeviceTag,
             _symbol, _x, _y, _rotationDegrees, _mirrored);
+    }
+}
+
+/// <summary>
+/// Creates a wire between two DevicePins — from manual drawing or auto-connect (Section 5.5/6.1).
+/// Undo deletes it; there's nothing else to restore since a Connection carries no cached geometry.
+/// </summary>
+internal sealed class CreateConnectionCommand(ProjectSession session, SchematicPageViewModel viewModel, long fromDevicePinId, long toDevicePinId) : IUndoableCommand
+{
+    private long _connectionId;
+
+    public void Do()
+    {
+        var connection = session.CreateConnection(fromDevicePinId, toDevicePinId);
+        _connectionId = connection.Id;
+        viewModel.AddConnectionToView(connection.Id, connection.WireNumber, fromDevicePinId, toDevicePinId);
+    }
+
+    public void Undo()
+    {
+        session.DeleteConnection(_connectionId);
+        viewModel.RemoveConnectionFromView(_connectionId);
+    }
+}
+
+/// <summary>
+/// Deletes a wire. Undo recreates it (new row Id) rather than restoring the original — the same
+/// recreate-not-restore simplification as DeleteCommand (ADR-007/ADR-009), since ConnectionEnd rows
+/// cascade away and there's nothing left to restore by Id. The recreated wire's number is set back
+/// to what it was, even though a fresh CreateConnection would otherwise auto-assign a new one.
+/// </summary>
+internal sealed class DeleteConnectionCommand : IUndoableCommand
+{
+    private readonly ProjectSession _session;
+    private readonly SchematicPageViewModel _viewModel;
+    private readonly long _fromDevicePinId;
+    private readonly long _toDevicePinId;
+    private readonly string? _wireNumber;
+    private long _connectionId;
+
+    public DeleteConnectionCommand(ProjectSession session, SchematicPageViewModel viewModel, ConnectionViewItem snapshot)
+    {
+        _session = session;
+        _viewModel = viewModel;
+        _connectionId = snapshot.ConnectionId;
+        _fromDevicePinId = snapshot.FromDevicePinId;
+        _toDevicePinId = snapshot.ToDevicePinId;
+        _wireNumber = snapshot.WireNumber;
+    }
+
+    public void Do()
+    {
+        _session.DeleteConnection(_connectionId);
+        _viewModel.RemoveConnectionFromView(_connectionId);
+    }
+
+    public void Undo()
+    {
+        var connection = _session.CreateConnection(_fromDevicePinId, _toDevicePinId);
+        _connectionId = connection.Id;
+        var wireNumber = _wireNumber ?? connection.WireNumber;
+        if (wireNumber != connection.WireNumber) _session.RenameWireNumber(connection.Id, wireNumber!);
+        _viewModel.AddConnectionToView(connection.Id, wireNumber, _fromDevicePinId, _toDevicePinId);
+    }
+}
+
+/// <summary>Renames a Connection's wire number between two known values.</summary>
+internal sealed class RenameWireNumberCommand(ProjectSession session, SchematicPageViewModel viewModel, long connectionId, string fromWireNumber, string toWireNumber) : IUndoableCommand
+{
+    public void Do()
+    {
+        session.RenameWireNumber(connectionId, toWireNumber);
+        viewModel.UpdateConnectionWireNumber(connectionId, toWireNumber);
+    }
+
+    public void Undo()
+    {
+        session.RenameWireNumber(connectionId, fromWireNumber);
+        viewModel.UpdateConnectionWireNumber(connectionId, fromWireNumber);
+    }
+}
+
+/// <summary>Reassigns every wire number in the project sequentially (Section 6.1: "renumber command
+/// available"). Undo restores each connection's previous number via ProjectSession.ApplyWireNumbers.</summary>
+internal sealed class RenumberWiresCommand(ProjectSession session, SchematicPageViewModel viewModel) : IUndoableCommand
+{
+    private IReadOnlyList<(long ConnectionId, string? OldWireNumber, string NewWireNumber)> _result = [];
+
+    public void Do()
+    {
+        _result = session.RenumberAllWires();
+        viewModel.ReloadConnectionsFromSession();
+    }
+
+    public void Undo()
+    {
+        session.ApplyWireNumbers(_result.Select(r => (r.ConnectionId, r.OldWireNumber)).ToList());
+        viewModel.ReloadConnectionsFromSession();
     }
 }

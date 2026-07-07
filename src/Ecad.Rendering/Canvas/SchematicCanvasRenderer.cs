@@ -9,21 +9,39 @@ namespace Ecad.Rendering.Canvas;
 public sealed record PlacementRenderInfo(long Id, string DeviceTag, double X, double Y, double Width, double Height,
     int RotationDegrees, bool Mirrored, SKPicture Picture, IReadOnlyList<string> SiblingPageLabels);
 
+/// <summary>A DevicePin's current world position — drawn as a small marker so there's something to click (M7).</summary>
+public sealed record PinRenderInfo(long DevicePinId, WorldPoint Position);
+
+/// <summary>A Connection's already-routed path (see OrthogonalRouter) plus its wire number, ready to draw (M7).</summary>
+public sealed record WireRenderInfo(long ConnectionId, string? WireNumber, IReadOnlyList<WorldPoint> Route);
+
+/// <summary>Everything M7 adds to a page's render pass, bundled to keep Render's own signature manageable.</summary>
+public sealed record WiringRenderInfo(IReadOnlyList<PinRenderInfo> Pins, IReadOnlyList<WireRenderInfo> Wires,
+    long? SelectedConnectionId, IReadOnlyList<WorldPoint> Junctions, IReadOnlyList<WorldPoint>? WireDrawPreviewRoute);
+
 /// <summary>Pure drawing logic for the schematic canvas — no WPF dependency, driven by SchematicPageWindow's PaintSurface handler.</summary>
 public static class SchematicCanvasRenderer
 {
     private static readonly SKColor GridColor = new(220, 220, 220);
+    private static readonly SKColor PinColor = new(160, 30, 30);
+    private static readonly SKColor WireColor = new(30, 30, 30);
+    private static readonly SKColor JunctionColor = new(30, 30, 30);
 
     public static void Render(SKCanvas canvas, CanvasViewport viewport, int surfaceWidth, int surfaceHeight,
-        IReadOnlyList<PlacementRenderInfo> placements, long? selectedPlacementId)
+        IReadOnlyList<PlacementRenderInfo> placements, long? selectedPlacementId, WiringRenderInfo wiring)
     {
         canvas.Clear(SKColors.White);
         DrawGrid(canvas, viewport, surfaceWidth, surfaceHeight);
+        DrawWires(canvas, viewport, wiring.Wires, wiring.SelectedConnectionId);
+        DrawJunctions(canvas, viewport, wiring.Junctions);
 
         foreach (var placement in placements)
         {
             DrawPlacement(canvas, viewport, placement, isSelected: placement.Id == selectedPlacementId);
         }
+
+        DrawPins(canvas, viewport, wiring.Pins);
+        if (wiring.WireDrawPreviewRoute is { Count: > 0 } preview) DrawWireDrawPreview(canvas, viewport, preview);
     }
 
     private static void DrawGrid(SKCanvas canvas, CanvasViewport viewport, int width, int height)
@@ -90,6 +108,78 @@ public static class SchematicCanvasRenderer
             using var crossRefFont = new SKFont { Size = 9 };
             var crossRefText = "-> " + string.Join(", ", placement.SiblingPageLabels.Select(label => "Pg " + label));
             canvas.DrawText(crossRefText, (float)screenX, (float)(screenY + screenHeight + 11), crossRefFont, crossRefPaint);
+        }
+    }
+
+    private static void DrawPins(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<PinRenderInfo> pins)
+    {
+        using var pinPaint = new SKPaint { Color = PinColor, IsAntialias = true, Style = SKPaintStyle.Fill };
+        const float radius = 3f;
+
+        foreach (var pin in pins)
+        {
+            var (screenX, screenY) = viewport.WorldToScreen(pin.Position.X, pin.Position.Y);
+            canvas.DrawCircle((float)screenX, (float)screenY, radius, pinPaint);
+        }
+    }
+
+    private static void DrawWires(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WireRenderInfo> wires, long? selectedConnectionId)
+    {
+        foreach (var wire in wires)
+        {
+            var isSelected = wire.ConnectionId == selectedConnectionId;
+            using var wirePaint = new SKPaint
+            {
+                Color = isSelected ? SKColors.DodgerBlue : WireColor,
+                StrokeWidth = isSelected ? 2.5f : 1.5f,
+                Style = SKPaintStyle.Stroke,
+                IsAntialias = true,
+            };
+
+            DrawRoute(canvas, viewport, wire.Route, wirePaint);
+
+            if (string.IsNullOrEmpty(wire.WireNumber) || wire.Route.Count == 0) continue;
+
+            var mid = wire.Route[wire.Route.Count / 2];
+            var (midScreenX, midScreenY) = viewport.WorldToScreen(mid.X, mid.Y);
+            using var numberPaint = new SKPaint { Color = WireColor, IsAntialias = true };
+            using var numberFont = new SKFont { Size = 9 };
+            canvas.DrawText(wire.WireNumber, (float)midScreenX + 3, (float)midScreenY - 3, numberFont, numberPaint);
+        }
+    }
+
+    private static void DrawJunctions(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WorldPoint> junctions)
+    {
+        using var junctionPaint = new SKPaint { Color = JunctionColor, IsAntialias = true, Style = SKPaintStyle.Fill };
+        const float radius = 3.5f;
+
+        foreach (var point in junctions)
+        {
+            var (screenX, screenY) = viewport.WorldToScreen(point.X, point.Y);
+            canvas.DrawCircle((float)screenX, (float)screenY, radius, junctionPaint);
+        }
+    }
+
+    private static void DrawWireDrawPreview(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WorldPoint> route)
+    {
+        using var previewPaint = new SKPaint
+        {
+            Color = SKColors.DodgerBlue,
+            StrokeWidth = 1.5f,
+            Style = SKPaintStyle.Stroke,
+            IsAntialias = true,
+            PathEffect = SKPathEffect.CreateDash([4, 4], 0),
+        };
+        DrawRoute(canvas, viewport, route, previewPaint);
+    }
+
+    private static void DrawRoute(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WorldPoint> route, SKPaint paint)
+    {
+        for (var i = 0; i < route.Count - 1; i++)
+        {
+            var (x1, y1) = viewport.WorldToScreen(route[i].X, route[i].Y);
+            var (x2, y2) = viewport.WorldToScreen(route[i + 1].X, route[i + 1].Y);
+            canvas.DrawLine((float)x1, (float)y1, (float)x2, (float)y2, paint);
         }
     }
 }

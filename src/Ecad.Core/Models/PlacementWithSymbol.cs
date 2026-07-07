@@ -16,4 +16,5 @@ public class PlacementWithSymbol
     public string SymbolName { get; set; } = string.Empty;
     public string? SymbolSvgFilePath { get; set; }
     public IReadOnlyList<SiblingPlacementRef> Siblings { get; set; } = [];
+    public IReadOnlyList<PlacementPinInfo> Pins { get; set; } = [];
 }

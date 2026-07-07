@@ -46,10 +46,18 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     private (double X, double Y) _panStartScreen;
     private (double PanX, double PanY) _panStartOffset;
 
+    // Wire-drawing drag state (M7) — parallel to the placement-drag/pan state above, not replacing it.
+    private long? _wireDrawFromDevicePinId;
+    private WorldPoint _wireDrawCurrentWorld;
+
     private const int PaletteThumbnailSize = 48;
+    private const double PinHitTolerance = 6; // world units — half a grid cell
+    private const double WireHitTolerance = 4;
+    private const double PinSnapRadius = 12; // world units — magnetic pull toward a nearby pin while placing/dragging
 
     public CanvasViewport Viewport { get; } = new();
     public ObservableCollection<PlacementViewItem> Placements { get; } = [];
+    public ObservableCollection<ConnectionViewItem> Connections { get; } = [];
     public IReadOnlyList<PaletteItem> PaletteItems { get; }
 
     /// <summary>Set by SchematicPageWindow's code-behind after construction, so dialogs (DeviceTagDialog) can center on it.</summary>
@@ -62,7 +70,10 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     private long? _selectedPlacementId;
 
     [ObservableProperty]
-    private string _statusText = "Select a symbol from the palette to place it, or click a placement to select it.";
+    private long? _selectedConnectionId;
+
+    [ObservableProperty]
+    private string _statusText = "Select a symbol from the palette to place it, click a pin to draw a wire, or click a placement to select it.";
 
     /// <summary>Raised whenever the canvas needs repainting — SchematicPageWindow subscribes and calls SKElement.InvalidateVisual().</summary>
     public event Action? RedrawRequested;
@@ -72,6 +83,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         _session = session;
         _page = page;
         _session.PlacementsChanged += OnSessionPlacementsChanged;
+        _session.ConnectionsChanged += OnSessionConnectionsChanged;
 
         var folder = Path.Combine(AppContext.BaseDirectory, "SymbolLibrary");
         var result = SymbolLibraryLoader.LoadFromFolder(folder);
@@ -98,6 +110,18 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
                 RotationDegrees = placement.RotationDegrees,
                 Mirrored = placement.Mirrored,
                 SiblingPageLabels = placement.Siblings.Select(s => s.PageLabel).ToList(),
+                Pins = placement.Pins,
+            });
+        }
+
+        foreach (var connection in _session.GetConnectionsForPage(_page.Id))
+        {
+            Connections.Add(new ConnectionViewItem
+            {
+                ConnectionId = connection.Id,
+                FromDevicePinId = connection.FromDevicePinId,
+                ToDevicePinId = connection.ToDevicePinId,
+                WireNumber = connection.WireNumber,
             });
         }
     }
@@ -144,22 +168,41 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var hit = PlacementHitTester.HitTest(BuildHitTestList(), Viewport, screenX, screenY);
-        SelectedPlacementId = hit;
+        var (worldX, worldY) = Viewport.ScreenToWorld(screenX, screenY);
+        var worldPoint = new WorldPoint(worldX, worldY);
+        var pinPositions = BuildPinPositions();
 
-        if (hit is { } placementId)
+        // Pins are the most specific target — a click near one starts a wire instead of selecting the placement it sits on.
+        if (WireHitTester.HitTestPin(worldPoint, pinPositions, PinHitTolerance) is { } fromPinId)
         {
+            _wireDrawFromDevicePinId = fromPinId;
+            _wireDrawCurrentWorld = worldPoint;
+            SelectedPlacementId = null;
+            SelectedConnectionId = null;
+            StatusText = "Drag to another pin to draw a wire.";
+            RedrawRequested?.Invoke();
+            return;
+        }
+
+        var placementHit = PlacementHitTester.HitTest(BuildHitTestList(), Viewport, screenX, screenY);
+        if (placementHit is { } placementId)
+        {
+            SelectedPlacementId = placementId;
+            SelectedConnectionId = null;
             var item = Placements.First(p => p.PlacementId == placementId);
             _dragPlacementId = placementId;
-            _dragStartWorld = Viewport.ScreenToWorld(screenX, screenY);
+            _dragStartWorld = (worldPoint.X, worldPoint.Y);
             _dragOriginalPosition = (item.X, item.Y);
             StatusText = $"Selected {item.DeviceTag}.";
-        }
-        else
-        {
-            StatusText = "Nothing selected.";
+            RedrawRequested?.Invoke();
+            return;
         }
 
+        var pinPositionsById = pinPositions.ToDictionary(p => p.DevicePinId, p => p.Position);
+        var wireHit = WireHitTester.HitTestWire(worldPoint, BuildWireHitTestList(pinPositionsById), WireHitTolerance);
+        SelectedPlacementId = null;
+        SelectedConnectionId = wireHit;
+        StatusText = wireHit is not null ? "Selected wire." : "Nothing selected.";
         RedrawRequested?.Invoke();
     }
 
@@ -167,6 +210,13 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     {
         var (worldXRaw, worldYRaw) = Viewport.ScreenToWorld(screenX, screenY);
         var (worldX, worldY) = Viewport.SnapToGrid(worldXRaw, worldYRaw);
+
+        // Magnetic pin snap: auto-connect needs a facing pin's row/column to line up exactly, which
+        // is nearly impossible to land by eye (pin offsets aren't visible until after placing). Nudges
+        // the placement so a nearby compatible pin's line becomes an exact match, the same way most
+        // ECAD tools snap wires/pins together.
+        var localPins = symbol.Definition.ConnectionPoints.Select(cp => (cp.X, cp.Y, cp.Direction));
+        (worldX, worldY) = ApplyPinMagnetSnap(localPins, 0, false, worldX, worldY, BuildPinPositions());
 
         SelectedPaletteSymbol = null;
 
@@ -186,20 +236,26 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             ? symbol.Definition.ConnectionPoints.Select(cp => cp.Pin).ToList()
             : ["1"];
 
+        long placedId;
         if (dialog.SelectedExistingDeviceId is { } existingDeviceId)
         {
             var existingDevice = existingDevices.First(d => d.Id == existingDeviceId);
-            _undoRedo.Execute(new AttachPlacementCommand(_session, this, _page.Id, existingDeviceId,
-                existingDevice.FunctionSegment, existingDevice.LocationSegment, existingDevice.DeviceTagSegment, symbol, pinNames, worldX, worldY));
+            var command = new AttachPlacementCommand(_session, this, _page.Id, existingDeviceId,
+                existingDevice.FunctionSegment, existingDevice.LocationSegment, existingDevice.DeviceTagSegment, symbol, pinNames, worldX, worldY);
+            _undoRedo.Execute(command);
+            placedId = command.PlacementId;
             StatusText = $"Placed '{symbol.Definition.Name}' on existing device {existingDevice.DeviceTagSegment}.";
         }
         else
         {
-            _undoRedo.Execute(new PlaceSymbolCommand(_session, this, _page.Id, symbol, pinNames, worldX, worldY,
-                dialog.Function, dialog.Location, dialog.Designation));
+            var command = new PlaceSymbolCommand(_session, this, _page.Id, symbol, pinNames, worldX, worldY,
+                dialog.Function, dialog.Location, dialog.Designation);
+            _undoRedo.Execute(command);
+            placedId = command.PlacementId;
             StatusText = $"Placed '{symbol.Definition.Name}' as {dialog.Designation}.";
         }
 
+        RunAutoConnect(placedId);
         NotifyUndoRedoChanged();
         RefreshFromSession();
     }
@@ -207,24 +263,44 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     private bool IsTagAvailable(string? function, string? location, string designation, long? excludingDeviceId) =>
         _session.IsTagAvailable(function, location, designation, excludingDeviceId);
 
-    /// <summary>Double-click on a placement renames its device tag. Editing the symbol's geometry
-    /// itself is the separate symbol editor (deferred to Phase 2, out of scope here).</summary>
+    /// <summary>Double-click on a placement renames its device tag; double-click on a wire renames its
+    /// wire number. Editing the symbol's geometry itself is the separate symbol editor (deferred to
+    /// Phase 2, out of scope here).</summary>
     public void HandleDoubleClick(double screenX, double screenY)
     {
-        var hit = PlacementHitTester.HitTest(BuildHitTestList(), Viewport, screenX, screenY);
-        if (hit is not { } placementId) return;
+        var placementHit = PlacementHitTester.HitTest(BuildHitTestList(), Viewport, screenX, screenY);
+        if (placementHit is { } placementId)
+        {
+            var item = Placements.First(p => p.PlacementId == placementId);
+            var device = _session.GetDevice(item.DeviceId)!;
+            var dialog = new DeviceTagDialog(device, IsTagAvailable) { Owner = OwnerWindow };
+            if (dialog.ShowDialog() != true) return;
 
-        var item = Placements.First(p => p.PlacementId == placementId);
-        var device = _session.GetDevice(item.DeviceId)!;
-        var dialog = new DeviceTagDialog(device, IsTagAvailable) { Owner = OwnerWindow };
-        if (dialog.ShowDialog() != true) return;
+            if (dialog.Function == item.Function && dialog.Location == item.Location && dialog.Designation == item.DeviceTag) return;
 
-        if (dialog.Function == item.Function && dialog.Location == item.Location && dialog.Designation == item.DeviceTag) return;
+            _undoRedo.Execute(new RenameTagCommand(_session, this, placementId, item.DeviceId,
+                item.Function, item.Location, item.DeviceTag, dialog.Function, dialog.Location, dialog.Designation));
+            NotifyUndoRedoChanged();
+            StatusText = $"Renamed to {dialog.Designation}.";
+            RedrawRequested?.Invoke();
+            return;
+        }
 
-        _undoRedo.Execute(new RenameTagCommand(_session, this, placementId, item.DeviceId,
-            item.Function, item.Location, item.DeviceTag, dialog.Function, dialog.Location, dialog.Designation));
+        var (worldX, worldY) = Viewport.ScreenToWorld(screenX, screenY);
+        var pinPositions = BuildPinPositions();
+        var pinPositionsById = pinPositions.ToDictionary(p => p.DevicePinId, p => p.Position);
+        var wireHit = WireHitTester.HitTestWire(new WorldPoint(worldX, worldY), BuildWireHitTestList(pinPositionsById), WireHitTolerance);
+        if (wireHit is not { } connectionId) return;
+
+        var connectionItem = Connections.First(c => c.ConnectionId == connectionId);
+        var wireDialog = new WireNumberDialog(connectionItem.WireNumber ?? string.Empty,
+            n => _session.IsWireNumberAvailable(n, connectionId)) { Owner = OwnerWindow };
+        if (wireDialog.ShowDialog() != true) return;
+        if (wireDialog.WireNumber == connectionItem.WireNumber) return;
+
+        _undoRedo.Execute(new RenameWireNumberCommand(_session, this, connectionId, connectionItem.WireNumber ?? string.Empty, wireDialog.WireNumber));
         NotifyUndoRedoChanged();
-        StatusText = $"Renamed to {dialog.Designation}.";
+        StatusText = $"Renamed wire to {wireDialog.WireNumber}.";
         RedrawRequested?.Invoke();
     }
 
@@ -245,6 +321,15 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (_wireDrawFromDevicePinId is not null)
+        {
+            var (worldX, worldY) = Viewport.ScreenToWorld(screenX, screenY);
+            var (snappedX, snappedY) = Viewport.SnapToGrid(worldX, worldY);
+            _wireDrawCurrentWorld = new WorldPoint(snappedX, snappedY);
+            RedrawRequested?.Invoke();
+            return;
+        }
+
         if (_dragPlacementId is { } placementId)
         {
             var (worldX, worldY) = Viewport.ScreenToWorld(screenX, screenY);
@@ -253,6 +338,15 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
                 _dragOriginalPosition.Y + (worldY - _dragStartWorld.Y));
 
             var item = Placements.First(p => p.PlacementId == placementId);
+            var draggedPinIds = item.Pins.Select(p => p.DevicePinId).ToHashSet();
+            var otherPins = BuildPinPositions().Where(p => !draggedPinIds.Contains(p.DevicePinId)).ToList();
+            var symbol = _symbolsByName[item.SymbolName];
+            var localPins = item.Pins
+                .Select(pin => symbol.Definition.ConnectionPoints.FirstOrDefault(cp => cp.Pin == pin.Name))
+                .Where(cp => cp is not null)
+                .Select(cp => (cp!.X, cp.Y, cp.Direction));
+            (snappedX, snappedY) = ApplyPinMagnetSnap(localPins, item.RotationDegrees, item.Mirrored, snappedX, snappedY, otherPins);
+
             item.X = snappedX;
             item.Y = snappedY;
             RedrawRequested?.Invoke();
@@ -261,6 +355,25 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
 
     public void HandleLeftButtonUp()
     {
+        if (_wireDrawFromDevicePinId is { } fromPinId)
+        {
+            var toPinId = WireHitTester.HitTestPin(_wireDrawCurrentWorld, BuildPinPositions(), PinHitTolerance);
+            _wireDrawFromDevicePinId = null;
+
+            if (toPinId is { } targetPinId && targetPinId != fromPinId && !_session.AreConnected(fromPinId, targetPinId))
+            {
+                _undoRedo.Execute(new CreateConnectionCommand(_session, this, fromPinId, targetPinId));
+                NotifyUndoRedoChanged();
+                StatusText = "Wire created.";
+            }
+            else
+            {
+                StatusText = "Wire cancelled.";
+            }
+            RedrawRequested?.Invoke();
+            return;
+        }
+
         if (_dragPlacementId is not { } placementId) return;
         _dragPlacementId = null;
 
@@ -275,7 +388,9 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         item.X = _dragOriginalPosition.X;
         item.Y = _dragOriginalPosition.Y;
         _undoRedo.Execute(new MoveCommand(_session, this, placementId, _dragOriginalPosition.X, _dragOriginalPosition.Y, finalX, finalY));
+        RunAutoConnect(placementId);
         NotifyUndoRedoChanged();
+        RedrawRequested?.Invoke();
     }
 
     public void HandleRightButtonUp() => _isPanning = false;
@@ -308,6 +423,16 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             return;
         }
 
+        if (key == Key.Delete && SelectedConnectionId is { } deleteConnectionId)
+        {
+            var connectionItem = Connections.First(c => c.ConnectionId == deleteConnectionId);
+            _undoRedo.Execute(new DeleteConnectionCommand(_session, this, connectionItem));
+            NotifyUndoRedoChanged();
+            SelectedConnectionId = null;
+            RedrawRequested?.Invoke();
+            return;
+        }
+
         if (key == Key.Delete && SelectedPlacementId is { } deleteId)
         {
             var item = Placements.First(p => p.PlacementId == deleteId);
@@ -324,18 +449,189 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             var item = Placements.First(p => p.PlacementId == rotateId);
             var newRotation = (item.RotationDegrees + 90) % 360;
             _undoRedo.Execute(new RotateCommand(_session, this, rotateId, item.RotationDegrees, item.Mirrored, newRotation, item.Mirrored));
+            RunAutoConnect(rotateId);
             NotifyUndoRedoChanged();
             RedrawRequested?.Invoke();
         }
+    }
+
+    [RelayCommand]
+    private void RenumberWires()
+    {
+        _undoRedo.Execute(new RenumberWiresCommand(_session, this));
+        NotifyUndoRedoChanged();
+        StatusText = "Wires renumbered.";
     }
 
     public IReadOnlyList<PlacementRenderInfo> BuildRenderList() =>
         Placements.Select(p => new PlacementRenderInfo(p.PlacementId, p.DeviceTag, p.X, p.Y,
             PlacementViewItem.Width, PlacementViewItem.Height, p.RotationDegrees, p.Mirrored, p.Picture, p.SiblingPageLabels)).ToList();
 
+    /// <summary>Everything M7 adds to the render pass — pins, wires, junctions, and the wire-draw preview if one's in progress.</summary>
+    public WiringRenderInfo BuildWiringRenderInfo()
+    {
+        var pinPositions = BuildPinPositions();
+        var pinPositionsById = pinPositions.ToDictionary(p => p.DevicePinId, p => p.Position);
+
+        // Whether a drag ends up connected or not is only decided on drop (RunAutoConnect) — stretching
+        // an existing wire live to follow the cursor mid-drag would visually imply it's continuously
+        // "attached," which it isn't. Hide wires touching the dragged placement's pins for the
+        // duration of the drag; they reappear (connected, reconnected, or gone) the moment it's released.
+        var draggedPinIds = _dragPlacementId is { } draggedPlacementId
+            ? Placements.FirstOrDefault(p => p.PlacementId == draggedPlacementId)?.Pins.Select(p => p.DevicePinId).ToHashSet() ?? []
+            : [];
+
+        var existingConnections = new List<ExistingConnection>();
+        var wireRenderInfos = new List<WireRenderInfo>();
+        foreach (var connection in Connections)
+        {
+            if (draggedPinIds.Contains(connection.FromDevicePinId) || draggedPinIds.Contains(connection.ToDevicePinId)) continue;
+            if (!pinPositionsById.TryGetValue(connection.FromDevicePinId, out var from)) continue;
+            if (!pinPositionsById.TryGetValue(connection.ToDevicePinId, out var to)) continue;
+
+            var route = OrthogonalRouter.Route(from, to);
+            existingConnections.Add(new ExistingConnection(connection.ConnectionId, connection.FromDevicePinId, connection.ToDevicePinId, route));
+            wireRenderInfos.Add(new WireRenderInfo(connection.ConnectionId, connection.WireNumber, route));
+        }
+
+        var junctions = JunctionDetector.FindJunctions(existingConnections, pinPositions);
+
+        IReadOnlyList<WorldPoint>? previewRoute = null;
+        if (_wireDrawFromDevicePinId is { } fromPinId && pinPositionsById.TryGetValue(fromPinId, out var fromPos))
+            previewRoute = OrthogonalRouter.Route(fromPos, _wireDrawCurrentWorld);
+
+        return new WiringRenderInfo(
+            pinPositions.Select(p => new PinRenderInfo(p.DevicePinId, p.Position)).ToList(),
+            wireRenderInfos, SelectedConnectionId, junctions, previewRoute);
+    }
+
     private List<HitTestPlacement> BuildHitTestList() =>
         Placements.Select(p => new HitTestPlacement(p.PlacementId, p.X, p.Y,
             PlacementViewItem.Width, PlacementViewItem.Height, p.RotationDegrees)).ToList();
+
+    /// <summary>Every pin's current world position, resolved via each placement's symbol connection points
+    /// transformed by its current position/rotation/mirror — recomputed fresh every call so drag/rotate stay live.</summary>
+    private List<PinPosition> BuildPinPositions()
+    {
+        var positions = new List<PinPosition>();
+        foreach (var item in Placements)
+        {
+            var symbol = _symbolsByName[item.SymbolName];
+            foreach (var pin in item.Pins)
+            {
+                var connectionPoint = symbol.Definition.ConnectionPoints.FirstOrDefault(cp => cp.Pin == pin.Name);
+                if (connectionPoint is null) continue;
+
+                var (worldX, worldY) = PlacementPinGeometry.GetPinWorldPosition(
+                    item.X, item.Y, item.RotationDegrees, item.Mirrored, connectionPoint.X, connectionPoint.Y);
+                var direction = PlacementPinGeometry.GetPinWorldDirection(item.RotationDegrees, item.Mirrored, connectionPoint.Direction);
+                positions.Add(new PinPosition(pin.DevicePinId, new WorldPoint(worldX, worldY), direction));
+            }
+        }
+        return positions;
+    }
+
+    /// <summary>
+    /// Auto-connect (AutoConnectDetector) only requires two facing pins to share a grid line, not to
+    /// touch — so the snap that makes this achievable by mouse pulls just the relevant axis into exact
+    /// alignment: a left/right-facing pin's Y toward a compatible pin's Y, an up/down-facing pin's X
+    /// toward a compatible pin's X. The other axis (how far apart they end up) is left wherever the
+    /// user placed/dragged it. Only pins with opposite directions are considered — this never pulls a
+    /// pin toward one it couldn't actually connect to.
+    /// </summary>
+    private static (double X, double Y) ApplyPinMagnetSnap(IEnumerable<(double X, double Y, double Direction)> localPins, int rotationDegrees, bool mirrored,
+        double candidateX, double candidateY, IReadOnlyList<PinPosition> otherPins)
+    {
+        double? bestDistance = null;
+        var snappedX = candidateX;
+        var snappedY = candidateY;
+
+        foreach (var (localX, localY, localDirection) in localPins)
+        {
+            var (candidatePinX, candidatePinY) = PlacementPinGeometry.GetPinWorldPosition(
+                candidateX, candidateY, rotationDegrees, mirrored, localX, localY);
+            var candidateDirection = PlacementPinGeometry.GetPinWorldDirection(rotationDegrees, mirrored, localDirection);
+            var isHorizontalFacing = IsHorizontalFacing(candidateDirection);
+
+            foreach (var otherPin in otherPins)
+            {
+                if (!AutoConnectDetector.AreOppositeDirections(candidateDirection, otherPin.Direction)) continue;
+
+                var axisDelta = isHorizontalFacing ? otherPin.Position.Y - candidatePinY : otherPin.Position.X - candidatePinX;
+                var distance = Math.Abs(axisDelta);
+                if (distance > PinSnapRadius) continue;
+                if (bestDistance is not null && distance >= bestDistance) continue;
+
+                bestDistance = distance;
+                snappedX = isHorizontalFacing ? candidateX : candidateX + axisDelta;
+                snappedY = isHorizontalFacing ? candidateY + axisDelta : candidateY;
+            }
+        }
+
+        return (snappedX, snappedY);
+    }
+
+    private static bool IsHorizontalFacing(double direction)
+    {
+        var normalized = ((direction % 360) + 360) % 360;
+        return normalized is 0 or 180;
+    }
+
+    private List<HitTestWire> BuildWireHitTestList(IReadOnlyDictionary<long, WorldPoint> pinPositionsById)
+    {
+        var wires = new List<HitTestWire>();
+        foreach (var connection in Connections)
+        {
+            if (!pinPositionsById.TryGetValue(connection.FromDevicePinId, out var from)) continue;
+            if (!pinPositionsById.TryGetValue(connection.ToDevicePinId, out var to)) continue;
+            wires.Add(new HitTestWire(connection.ConnectionId, OrthogonalRouter.Route(from, to)));
+        }
+        return wires;
+    }
+
+    /// <summary>
+    /// Keeps a just-placed/moved/rotated placement's wiring consistent with its current geometry.
+    /// A connection is only valid while its two pins are on the same grid line and facing each other
+    /// (AutoConnectDetector.AreFacingEachOther) — this is re-checked every time, not just at creation
+    /// time, so a wire does NOT simply stretch to follow a component wherever it goes: move a
+    /// connected pin off that line and the connection is dropped, exactly like it never auto-connects
+    /// to a non-facing pin in the first place. New facing touches are still auto-connected the same
+    /// way. Only runs after interactive actions, not after undo/redo of them — a deliberate scope
+    /// limit (ADR-009).
+    /// </summary>
+    private void RunAutoConnect(long placementId)
+    {
+        var item = Placements.FirstOrDefault(p => p.PlacementId == placementId);
+        if (item is null || item.Pins.Count == 0) return;
+
+        var allPinPositions = BuildPinPositions();
+        var pinsById = allPinPositions.ToDictionary(p => p.DevicePinId);
+        var movedPinIds = item.Pins.Select(p => p.DevicePinId).ToHashSet();
+        var movedPins = allPinPositions.Where(p => movedPinIds.Contains(p.DevicePinId)).ToList();
+        var otherPins = allPinPositions.Where(p => !movedPinIds.Contains(p.DevicePinId)).ToList();
+
+        var brokenConnections = Connections
+            .Where(c => movedPinIds.Contains(c.FromDevicePinId) || movedPinIds.Contains(c.ToDevicePinId))
+            .Where(c => pinsById.ContainsKey(c.FromDevicePinId) && pinsById.ContainsKey(c.ToDevicePinId))
+            .Where(c => !AutoConnectDetector.AreFacingEachOther(pinsById[c.FromDevicePinId], pinsById[c.ToDevicePinId]))
+            .ToList();
+        foreach (var connection in brokenConnections)
+            _undoRedo.Execute(new DeleteConnectionCommand(_session, this, connection));
+
+        var pinPositionsById = allPinPositions.ToDictionary(p => p.DevicePinId, p => p.Position);
+        var existingConnections = Connections
+            .Where(c => pinPositionsById.ContainsKey(c.FromDevicePinId) && pinPositionsById.ContainsKey(c.ToDevicePinId))
+            .Select(c => new ExistingConnection(c.ConnectionId, c.FromDevicePinId, c.ToDevicePinId,
+                OrthogonalRouter.Route(pinPositionsById[c.FromDevicePinId], pinPositionsById[c.ToDevicePinId])))
+            .ToList();
+
+        var newPairs = AutoConnectDetector.FindNewConnections(movedPins, otherPins, existingConnections, _session.AreConnected);
+        foreach (var (fromId, toId) in newPairs)
+            _undoRedo.Execute(new CreateConnectionCommand(_session, this, fromId, toId));
+
+        if (brokenConnections.Count > 0 || newPairs.Count > 0)
+            StatusText = $"{newPairs.Count} wire(s) auto-connected, {brokenConnections.Count} disconnected.";
+    }
 
     /// <summary>
     /// Fired by ProjectSession.PlacementsChanged when placements are added/removed or a Device is
@@ -379,6 +675,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             Y = y,
             RotationDegrees = rotationDegrees,
             Mirrored = mirrored,
+            Pins = _session.GetPlacementPins(placementId),
         });
     }
 
@@ -410,6 +707,55 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         item.DeviceTag = deviceTag;
     }
 
+    internal void AddConnectionToView(long connectionId, string? wireNumber, long fromDevicePinId, long toDevicePinId)
+    {
+        // Idempotent: ProjectSession.CreateConnection raises ConnectionsChanged synchronously (before
+        // returning to the caller), which this same ViewModel handles by reloading all of this page's
+        // connections from the DB — so by the time a command's Do() reaches this call, the connection
+        // may already be present. Without this guard it would be added a second time.
+        if (Connections.Any(c => c.ConnectionId == connectionId)) return;
+
+        Connections.Add(new ConnectionViewItem
+        {
+            ConnectionId = connectionId,
+            FromDevicePinId = fromDevicePinId,
+            ToDevicePinId = toDevicePinId,
+            WireNumber = wireNumber,
+        });
+    }
+
+    internal void RemoveConnectionFromView(long connectionId)
+    {
+        var item = Connections.FirstOrDefault(c => c.ConnectionId == connectionId);
+        if (item is not null) Connections.Remove(item);
+    }
+
+    internal void UpdateConnectionWireNumber(long connectionId, string wireNumber)
+    {
+        var item = Connections.First(c => c.ConnectionId == connectionId);
+        item.WireNumber = wireNumber;
+    }
+
+    /// <summary>Fired by ProjectSession.ConnectionsChanged (M7's analog of OnSessionPlacementsChanged) —
+    /// keeps this page's wires live across every other open SchematicPageWindow too.</summary>
+    private void OnSessionConnectionsChanged() => ReloadConnectionsFromSession();
+
+    internal void ReloadConnectionsFromSession()
+    {
+        Connections.Clear();
+        foreach (var connection in _session.GetConnectionsForPage(_page.Id))
+        {
+            Connections.Add(new ConnectionViewItem
+            {
+                ConnectionId = connection.Id,
+                FromDevicePinId = connection.FromDevicePinId,
+                ToDevicePinId = connection.ToDevicePinId,
+                WireNumber = connection.WireNumber,
+            });
+        }
+        RedrawRequested?.Invoke();
+    }
+
     private SKPicture GetOrLoadPicture(LoadedSymbol symbol)
     {
         if (_svgCache.TryGetValue(symbol.Definition.Name, out var cachedSvg)) return cachedSvg.Picture!;
@@ -424,6 +770,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _session.PlacementsChanged -= OnSessionPlacementsChanged;
+        _session.ConnectionsChanged -= OnSessionConnectionsChanged;
         foreach (var svg in _svgCache.Values) svg.Dispose();
         _svgCache.Clear();
     }

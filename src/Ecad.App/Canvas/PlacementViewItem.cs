@@ -1,3 +1,4 @@
+using Ecad.Core.Models;
 using SkiaSharp;
 
 namespace Ecad.App.Canvas;
@@ -17,6 +18,10 @@ public sealed class PlacementViewItem
     public int RotationDegrees { get; set; }
     public bool Mirrored { get; set; }
     public IReadOnlyList<string> SiblingPageLabels { get; set; } = [];
+
+    /// <summary>The DevicePins this placement exposes — resolved to world positions (via the symbol's
+    /// matching-named connection points) for wire rendering/hit-testing (M7).</summary>
+    public IReadOnlyList<PlacementPinInfo> Pins { get; set; } = [];
 
     // Every M4 starter symbol shares the 0..40 viewBox convention (ADR-006) — placements occupy one fixed world footprint.
     public const double Width = 40;
