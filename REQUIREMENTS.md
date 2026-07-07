@@ -30,6 +30,13 @@ Primary reference user: an electrical engineer at a robotics company documenting
 ### Phase 2 — Robustness & authoring tools
 - In-app visual form/report layout editor
 - In-app visual symbol editor (copy, modify geometry, connection points)
+- AI-assisted symbol authoring: generate a symbol's SVG + connection-point metadata from a text
+  description or a reference screenshot, to expand the starter library without hand-drawing every
+  shape. Symbols represent device *kinds* (relay coil, NO contact, 3-phase motor...), not individual
+  parts, so this is a bounded library (dozens to a few hundred shapes), not a per-part pipeline.
+  Separately worth investigating: an existing open/permissively-licensed IEC-style symbol library as
+  a seed set — license terms would need verifying before importing anything from one. EPLAN's own
+  symbol formats (`.sdb`, `.esl`) are proprietary/opaque and already ruled out (see DECISIONS.md).
 - Rule-based numbering schemes (configurable)
 - Project templates; revision/change tracking (lightweight)
 - Terminal diagrams, wiring lists (additional report types)
