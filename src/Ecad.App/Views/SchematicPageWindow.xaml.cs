@@ -17,14 +17,55 @@ namespace Ecad.App.Views;
 /// </summary>
 public partial class SchematicPageWindow : Window
 {
+    // Single-project-at-a-time (M2) makes a plain static registry safe — no per-session scoping
+    // needed. Every constructor call self-registers; OnClosed unregisters. Keyed by Page.Id so a
+    // page never has more than one window open at once.
+    private static readonly Dictionary<long, SchematicPageWindow> OpenWindowsByPageId = new();
+
+    private readonly ProjectSession _session;
+    private readonly long _pageId;
     private readonly SchematicPageViewModel _viewModel;
 
-    public SchematicPageWindow(ProjectSession session, Page page)
+    public SchematicPageWindow(ProjectSession session, Page page, long? focusPlacementId = null)
     {
         InitializeComponent();
-        _viewModel = new SchematicPageViewModel(session, page);
+        _session = session;
+        _pageId = page.Id;
+        _viewModel = new SchematicPageViewModel(session, page, focusPlacementId);
         DataContext = _viewModel;
         _viewModel.RedrawRequested += () => SkiaCanvas.InvalidateVisual();
+        _viewModel.NavigateToPageRequested += OnNavigateToPageRequested;
+
+        OpenWindowsByPageId[_pageId] = this;
+    }
+
+    /// <summary>
+    /// Opens the given page, or — if it's already open — brings that window to the front and selects
+    /// focusPlacementId instead of opening a duplicate. The single entry point for "show me this
+    /// page": both MainWindow's double-click-a-page and Ctrl+Click navigation (below) go through this.
+    /// </summary>
+    public static void OpenOrFocus(ProjectSession session, Page page, long? focusPlacementId = null, Window? owner = null)
+    {
+        if (OpenWindowsByPageId.TryGetValue(page.Id, out var existing))
+        {
+            if (existing.WindowState == WindowState.Minimized) existing.WindowState = WindowState.Normal;
+            existing.Activate();
+            if (focusPlacementId is { } id) existing._viewModel.FocusPlacement(id);
+            return;
+        }
+
+        new SchematicPageWindow(session, page, focusPlacementId) { Owner = owner }.Show();
+    }
+
+    /// <summary>Ctrl+Click on a placement with a sibling elsewhere (e.g. an interruption-point pair,
+    /// or any multi-placement device) jumps to that page, focusing the existing window for it if one's
+    /// already open rather than opening a duplicate.</summary>
+    private void OnNavigateToPageRequested(long pageId, long placementId)
+    {
+        var page = _session.Pages.FirstOrDefault(p => p.Id == pageId);
+        if (page is null) return;
+
+        OpenOrFocus(_session, page, placementId, Owner);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -35,6 +76,9 @@ public partial class SchematicPageWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        if (OpenWindowsByPageId.TryGetValue(_pageId, out var current) && current == this)
+            OpenWindowsByPageId.Remove(_pageId);
+
         _viewModel.Dispose();
         base.OnClosed(e);
     }
@@ -56,7 +100,7 @@ public partial class SchematicPageWindow : Window
         }
         else if (e.ChangedButton == MouseButton.Left)
         {
-            _viewModel.HandleLeftButtonDown(position.X, position.Y);
+            _viewModel.HandleLeftButtonDown(position.X, position.Y, Keyboard.Modifiers.HasFlag(ModifierKeys.Control));
         }
         else if (e.ChangedButton == MouseButton.Right)
         {

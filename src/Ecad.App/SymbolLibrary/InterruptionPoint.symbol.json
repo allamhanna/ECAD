@@ -1,0 +1,14 @@
+{
+  "name": "InterruptionPoint",
+  "category": "References",
+  "connectionPoints": [
+    { "pin": "1", "x": 0, "y": 20, "direction": 180 },
+    { "pin": "2", "x": 40, "y": 20, "direction": 0 }
+  ],
+  "textPlaceholders": [
+    { "kind": "Tag", "x": 12, "y": 2, "anchor": "start" }
+  ],
+  "variants": [
+    { "name": "Default", "rotationDegrees": 0, "mirrored": false }
+  ]
+}

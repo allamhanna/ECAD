@@ -78,7 +78,12 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     /// <summary>Raised whenever the canvas needs repainting — SchematicPageWindow subscribes and calls SKElement.InvalidateVisual().</summary>
     public event Action? RedrawRequested;
 
-    public SchematicPageViewModel(ProjectSession session, Page page)
+    /// <summary>Raised when Ctrl+Click hits a placement that has a sibling elsewhere (Section 5.4
+    /// cross-reference — most notably an interruption-point pair) — carries the sibling's PageId and
+    /// PlacementId. SchematicPageWindow handles this by opening that page with the placement selected.</summary>
+    public event Action<long, long>? NavigateToPageRequested;
+
+    public SchematicPageViewModel(ProjectSession session, Page page, long? focusPlacementId = null)
     {
         _session = session;
         _page = page;
@@ -110,6 +115,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
                 RotationDegrees = placement.RotationDegrees,
                 Mirrored = placement.Mirrored,
                 SiblingPageLabels = placement.Siblings.Select(s => s.PageLabel).ToList(),
+                Siblings = placement.Siblings,
                 Pins = placement.Pins,
             });
         }
@@ -124,6 +130,9 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
                 WireNumber = connection.WireNumber,
             });
         }
+
+        if (focusPlacementId is { } id && Placements.Any(p => p.PlacementId == id))
+            SelectedPlacementId = id;
     }
 
     [RelayCommand]
@@ -160,7 +169,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         RedoCommand.NotifyCanExecuteChanged();
     }
 
-    public void HandleLeftButtonDown(double screenX, double screenY)
+    public void HandleLeftButtonDown(double screenX, double screenY, bool ctrlPressed = false)
     {
         if (SelectedPaletteSymbol is { } symbol)
         {
@@ -173,7 +182,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         var pinPositions = BuildPinPositions();
 
         // Pins are the most specific target — a click near one starts a wire instead of selecting the placement it sits on.
-        if (WireHitTester.HitTestPin(worldPoint, pinPositions, PinHitTolerance) is { } fromPinId)
+        if (!ctrlPressed && WireHitTester.HitTestPin(worldPoint, pinPositions, PinHitTolerance) is { } fromPinId)
         {
             _wireDrawFromDevicePinId = fromPinId;
             _wireDrawCurrentWorld = worldPoint;
@@ -187,9 +196,17 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         var placementHit = PlacementHitTester.HitTest(BuildHitTestList(), Viewport, screenX, screenY);
         if (placementHit is { } placementId)
         {
+            var item = Placements.First(p => p.PlacementId == placementId);
+
+            if (ctrlPressed && item.Siblings.Count > 0)
+            {
+                var sibling = item.Siblings[0];
+                NavigateToPageRequested?.Invoke(sibling.PageId, sibling.PlacementId);
+                return;
+            }
+
             SelectedPlacementId = placementId;
             SelectedConnectionId = null;
-            var item = Placements.First(p => p.PlacementId == placementId);
             _dragPlacementId = placementId;
             _dragStartWorld = (worldPoint.X, worldPoint.Y);
             _dragOriginalPosition = (item.X, item.Y);
@@ -655,6 +672,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             item.Function = placement.FunctionSegment;
             item.Location = placement.LocationSegment;
             item.SiblingPageLabels = placement.Siblings.Select(s => s.PageLabel).ToList();
+            item.Siblings = placement.Siblings;
         }
         RedrawRequested?.Invoke();
     }
@@ -683,6 +701,15 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     {
         var item = Placements.FirstOrDefault(p => p.PlacementId == placementId);
         if (item is not null) Placements.Remove(item);
+    }
+
+    /// <summary>Selects a placement already on this page — used when an already-open window is
+    /// brought to front by navigation instead of a new one being constructed with focusPlacementId.</summary>
+    internal void FocusPlacement(long placementId)
+    {
+        if (!Placements.Any(p => p.PlacementId == placementId)) return;
+        SelectedPlacementId = placementId;
+        RedrawRequested?.Invoke();
     }
 
     internal void UpdatePlacementPosition(long placementId, double x, double y)

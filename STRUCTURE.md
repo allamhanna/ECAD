@@ -2,7 +2,7 @@
 
 This file describes the actual folder/solution layout as it exists, kept in sync as the project is built. See `DECISIONS.md` ADR-001 for the stack rationale and `PROGRESS.md` for what's built vs planned.
 
-## Current layout (as of M7 — Auto-connect wiring — complete)
+## Current layout (as of M7 + interruption-points follow-up — complete)
 
 ```
 electrical CAD/
@@ -44,7 +44,11 @@ electrical CAD/
                              parallel to the existing placement-drag/pan state, direction-aware magnetic
                              pin-snap while placing/dragging (ApplyPinMagnetSnap), and RunAutoConnect
                              (auto-connect *and* auto-disconnect a moved/rotated placement's wiring
-                             against its current geometry every time — see ADR-009)
+                             against its current geometry every time — see ADR-009). Interruption-points
+                             follow-up: Ctrl+Click support in HandleLeftButtonDown and a
+                             NavigateToPageRequested event (siblingPageId, siblingPlacementId) — fires
+                             for any placement with a sibling, not just interruption points; optional
+                             focusPlacementId constructor parameter selects that placement once loaded
       Views/                NewProjectDialog, AddPageDialog — plain code-behind modal dialogs
                              PartsLibraryWindow — non-modal, master-detail parts browser (read-only),
                              detail panel includes an Image control bound to PreviewImage
@@ -61,13 +65,25 @@ electrical CAD/
                              interactive use of SkiaSharp.Views.WPF, IgnorePixelScaling="True" per
                              ADR-007) + a palette sidebar of the M4 starter symbols + a "Renumber Wires"
                              toolbar button (M7); mouse/keyboard events are translated to
-                             SchematicPageViewModel calls, nothing else lives in the code-behind
+                             SchematicPageViewModel calls, nothing else lives in the code-behind.
+                             Interruption-points follow-up: a static `Dictionary<long, SchematicPageWindow>`
+                             registry keyed by PageId (single-project-at-a-time per M2 makes this safe
+                             without per-session scoping) and `OpenOrFocus(session, page, focusPlacementId,
+                             owner)` — the one entry point for "show me this page," used by both
+                             MainViewModel.OpenPage and Ctrl+Click navigation — brings an already-open
+                             page's window to front and selects the target placement instead of opening
+                             a duplicate
       SymbolLibrary/         8 starter IEC-style symbols: RelayCoil, ContactNO, ContactNC, Terminal,
                              Motor3Phase, PushbuttonNO, Fuse, Lamp — each a plain .svg + .symbol.json
-                             sidecar (see ADR-006), Content/CopyToOutputDirectory
+                             sidecar (see ADR-006), Content/CopyToOutputDirectory. InterruptionPoint (M7
+                             follow-up): an arrow with a connection point at *both* ends, so either end
+                             can be wired and the arrow reads as pointing away from or into the real
+                             connection without needing to rotate the symbol; pairing two placements of
+                             it across pages (via the existing "attach to existing Device" flow) is what
+                             represents a cross-page wire continuation — no new schema needed
       MainWindow.xaml(.cs)  File menu, page ListView (Function/Location/DocType/PageNumber/Type columns,
-                             double-click a row to open SchematicPageWindow), status bar;
-                             DataContext = MainViewModel
+                             double-click a row to open/focus its SchematicPageWindow via
+                             SchematicPageWindow.OpenOrFocus), status bar; DataContext = MainViewModel
     Ecad.Core/             domain models & business logic (net8.0, no UI/storage deps)
       Models/              Project, Page, Device, DevicePin, Placement, PlacementPin, Connection, ConnectionEnd,
                             Cable, CableCore, Part, PartPinTemplate, PartTerminalSpec, PartAccessory, PartImage,
@@ -172,6 +188,6 @@ Dependency direction: `Ecad.App` depends on `Ecad.Core`, `Ecad.Data`, `Ecad.Rend
 
 Two SQLite databases per ADR-003: a per-project file (Project DB) and a shared `library.db` (Library DB). The `Part`/`PartPinTemplate`/`PartTerminalSpec`/`PartAccessory` tables exist with identical DDL in both — the Project DB's copy is a local cache populated when a Device first references a library Part, so a project file stays portable on its own.
 
-Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 113 tests passing across three test projects (Core 8, Data 47, Rendering 58). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. Verified `SymbolLibrary/*` files actually land in the build output directory (`bin/Debug/net8.0-windows/SymbolLibrary/`). The Parts Library and Symbol Browser windows' visual/interactive behavior is pending a user click-through. The M5 schematic canvas (place/select/drag/rotate/rename/delete/undo/redo) was click-tested live by the user end-to-end, including two real bugs found and fixed along the way — see ADR-007. The M6 multi-placement devices, segment-aware tagging, and cross-reference display (including across two simultaneously-open page windows) were click-tested live by the user end-to-end, including three real bugs found and fixed along the way — see ADR-008. The M7 auto-connect wiring (pin geometry, manual wire drawing, direction-aware auto-connect/disconnect, junctions, wire numbering) went through several rounds of live user feedback before landing on its final direction-aware, geometrically-live behavior — see ADR-009.
+Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 113 tests passing across three test projects (Core 8, Data 47, Rendering 58) — the interruption-points follow-up needed no Ecad.Data/Core/Rendering changes, so this count is unchanged since M7. Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. Verified `SymbolLibrary/*` files actually land in the build output directory (`bin/Debug/net8.0-windows/SymbolLibrary/`). The Parts Library and Symbol Browser windows' visual/interactive behavior is pending a user click-through. The M5 schematic canvas (place/select/drag/rotate/rename/delete/undo/redo) was click-tested live by the user end-to-end, including two real bugs found and fixed along the way — see ADR-007. The M6 multi-placement devices, segment-aware tagging, and cross-reference display (including across two simultaneously-open page windows) were click-tested live by the user end-to-end, including three real bugs found and fixed along the way — see ADR-008. The M7 auto-connect wiring (pin geometry, manual wire drawing, direction-aware auto-connect/disconnect, junctions, wire numbering) went through several rounds of live user feedback before landing on its final direction-aware, geometrically-live behavior — see ADR-009. The interruption-points follow-up (two-ended symbol, Ctrl+Click page navigation, single-window-per-page dedup) was click-tested live by the user end-to-end right after.
 
-This section will be updated with real detail as each milestone lands — next up: M8 (grid-based editing) or the deferred cross-page "interruption point" wiring follow-up, to be decided with the user.
+This section will be updated with real detail as each milestone lands — next up: M8 (grid-based editing), to be decided with the user.

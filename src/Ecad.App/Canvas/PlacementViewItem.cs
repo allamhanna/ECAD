@@ -19,6 +19,10 @@ public sealed class PlacementViewItem
     public bool Mirrored { get; set; }
     public IReadOnlyList<string> SiblingPageLabels { get; set; } = [];
 
+    /// <summary>The other placements of this Device (Section 5.4 cross-reference) — kept alongside the
+    /// display-only SiblingPageLabels so Ctrl+Click navigation has an actual PageId/PlacementId to jump to.</summary>
+    public IReadOnlyList<SiblingPlacementRef> Siblings { get; set; } = [];
+
     /// <summary>The DevicePins this placement exposes — resolved to world positions (via the symbol's
     /// matching-named connection points) for wire rendering/hit-testing (M7).</summary>
     public IReadOnlyList<PlacementPinInfo> Pins { get; set; } = [];

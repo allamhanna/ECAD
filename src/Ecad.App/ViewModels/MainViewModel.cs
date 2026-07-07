@@ -157,11 +157,8 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     private bool CanImportEplanParts() => !IsImporting;
 
-    public void OpenPage(Page page)
-    {
-        var window = new SchematicPageWindow(_session!, page) { Owner = Application.Current.MainWindow };
-        window.Show();
-    }
+    public void OpenPage(Page page) =>
+        SchematicPageWindow.OpenOrFocus(_session!, page, owner: Application.Current.MainWindow);
 
     [RelayCommand]
     private static void OpenPartsLibrary() => new PartsLibraryWindow().Show();
