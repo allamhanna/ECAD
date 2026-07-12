@@ -14,7 +14,12 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        DataContext = new MainViewModel();
+        var viewModel = new MainViewModel();
+        DataContext = viewModel;
+
+        // Deferred to Loaded (not run inside the constructor) so Application.Current.MainWindow is
+        // already set by the time an auto-reopened page's dialogs try to own themselves against it.
+        Loaded += (_, _) => viewModel.TryAutoReopenLastProject();
     }
 
     protected override void OnClosed(EventArgs e)

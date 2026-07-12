@@ -4,8 +4,26 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Ecad.App"
+        xmlns:vm="clr-namespace:Ecad.App.ViewModels"
+        xmlns:views="clr-namespace:Ecad.App.Views"
         mc:Ignorable="d"
-        Title="{Binding WindowTitle}" Height="600" Width="900">
+        Title="{Binding WindowTitle}" Height="700" Width="1200" Icon="Assets/AppIcon.ico">
+    <Window.Resources>
+        <!-- M10: each open document's tab content is resolved by its ViewModel's type — one
+             ContentPresenter in the TabControl below, many possible Views, no manual view-locator. -->
+        <DataTemplate DataType="{x:Type vm:SchematicPageViewModel}">
+            <views:SchematicPageView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:GridEditorViewModel}">
+            <views:GridEditorView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:PartsLibraryViewModel}">
+            <views:PartsLibraryView/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SymbolBrowserViewModel}">
+            <views:SymbolBrowserView/>
+        </DataTemplate>
+    </Window.Resources>
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
@@ -16,9 +34,11 @@
                 <MenuItem Header="Save _As..." Command="{Binding SaveAsCommand}"/>
                 <MenuItem Header="_Close Project" Command="{Binding CloseProjectCommand}"/>
                 <Separator/>
+                <MenuItem Header="_Grid Editor" Command="{Binding OpenGridEditorCommand}"/>
+                <Separator/>
                 <MenuItem Header="_Import EPLAN Parts..." Command="{Binding ImportEplanPartsCommand}"/>
-                <MenuItem Header="_Parts Library..." Command="{Binding OpenPartsLibraryCommand}"/>
-                <MenuItem Header="Symbol _Browser..." Command="{Binding OpenSymbolBrowserCommand}"/>
+                <MenuItem Header="_Parts Library" Command="{Binding OpenPartsLibraryCommand}"/>
+                <MenuItem Header="Symbol _Browser" Command="{Binding OpenSymbolBrowserCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}"/>
             </MenuItem>
@@ -30,22 +50,49 @@
             </StatusBarItem>
         </StatusBar>
 
-        <DockPanel LastChildFill="True">
-            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
-                <TextBlock Text="Pages" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                <Button Content="Add Page..." Command="{Binding AddPageCommand}" Padding="8,2"/>
-            </StackPanel>
-            <ListView ItemsSource="{Binding Pages}" Margin="8" MouseDoubleClick="OnPagesDoubleClick">
-                <ListView.View>
-                    <GridView>
-                        <GridViewColumn Header="Function" Width="100" DisplayMemberBinding="{Binding FunctionSegment}"/>
-                        <GridViewColumn Header="Location" Width="100" DisplayMemberBinding="{Binding LocationSegment}"/>
-                        <GridViewColumn Header="Document Type" Width="120" DisplayMemberBinding="{Binding DocumentTypeSegment}"/>
-                        <GridViewColumn Header="Page Number" Width="100" DisplayMemberBinding="{Binding PageNumberSegment}"/>
-                        <GridViewColumn Header="Type" Width="100" DisplayMemberBinding="{Binding PageType}"/>
-                    </GridView>
-                </ListView.View>
-            </ListView>
-        </DockPanel>
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="260"/>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <DockPanel Grid.Column="0">
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
+                    <TextBlock Text="Pages" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <Button Content="Add Page..." Command="{Binding AddPageCommand}" Padding="8,2"/>
+                </StackPanel>
+                <ListView ItemsSource="{Binding Pages}" Margin="8" MouseDoubleClick="OnPagesDoubleClick">
+                    <ListView.View>
+                        <GridView>
+                            <GridViewColumn Header="Function" Width="70" DisplayMemberBinding="{Binding FunctionSegment}"/>
+                            <GridViewColumn Header="Location" Width="70" DisplayMemberBinding="{Binding LocationSegment}"/>
+                            <GridViewColumn Header="Doc Type" Width="65" DisplayMemberBinding="{Binding DocumentTypeSegment}"/>
+                            <GridViewColumn Header="Page #" Width="60" DisplayMemberBinding="{Binding PageNumberSegment}"/>
+                        </GridView>
+                    </ListView.View>
+                </ListView>
+            </DockPanel>
+
+            <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="LightGray"/>
+
+            <TabControl Grid.Column="2" ItemsSource="{Binding OpenTabs}" SelectedItem="{Binding SelectedTab}">
+                <TabControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="{Binding Header}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <Button Content="✕" Padding="4,0" FontSize="10"
+                                    Command="{Binding DataContext.CloseTabCommand, RelativeSource={RelativeSource AncestorType=TabControl}}"
+                                    CommandParameter="{Binding}"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </TabControl.ItemTemplate>
+                <TabControl.ContentTemplate>
+                    <DataTemplate>
+                        <ContentPresenter Content="{Binding Content}"/>
+                    </DataTemplate>
+                </TabControl.ContentTemplate>
+            </TabControl>
+        </Grid>
     </DockPanel>
 </Window>

@@ -17,6 +17,36 @@ public static class PlacementHitTester
         return null;
     }
 
+    /// <summary>Every placement whose (unrotated) bounding box intersects the given world-space
+    /// rectangle — the rubber-band multi-select query. Deliberately not rotation-aware (unlike the
+    /// point-based HitTest above): a precise rotated-rect-vs-rect intersection isn't worth the
+    /// complexity for a marquee select, where "roughly overlaps" is what a user expects anyway.
+    /// requireFullContainment switches to the AutoCAD-style "window select" rule (a placement must be
+    /// entirely inside the rectangle, not just touched by it) — the caller picks this based on drag
+    /// direction (left-to-right = window, right-to-left = crossing).</summary>
+    public static IReadOnlyList<long> HitTestRect(IReadOnlyList<HitTestPlacement> placements, double worldX1, double worldY1, double worldX2, double worldY2,
+        bool requireFullContainment = false)
+    {
+        var minX = Math.Min(worldX1, worldX2);
+        var maxX = Math.Max(worldX1, worldX2);
+        var minY = Math.Min(worldY1, worldY2);
+        var maxY = Math.Max(worldY1, worldY2);
+
+        var result = new List<long>();
+        foreach (var placement in placements)
+        {
+            var placementMaxX = placement.X + placement.Width;
+            var placementMaxY = placement.Y + placement.Height;
+
+            var hit = requireFullContainment
+                ? placement.X >= minX && placementMaxX <= maxX && placement.Y >= minY && placementMaxY <= maxY
+                : placementMaxX >= minX && placement.X <= maxX && placementMaxY >= minY && placement.Y <= maxY;
+
+            if (hit) result.Add(placement.Id);
+        }
+        return result;
+    }
+
     private static bool IsPointInRotatedRect(double pointX, double pointY, HitTestPlacement placement)
     {
         var centerX = placement.X + placement.Width / 2;

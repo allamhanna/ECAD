@@ -68,4 +68,73 @@ public class PlacementHitTesterTests
 
         Assert.Equal(1, hit);
     }
+
+    [Fact]
+    public void HitTestRect_ReturnsAllPlacementsFullyInsideTheRectangle()
+    {
+        var placements = new[]
+        {
+            new HitTestPlacement(1, X: 0, Y: 0, Width: 40, Height: 40, RotationDegrees: 0),
+            new HitTestPlacement(2, X: 100, Y: 100, Width: 40, Height: 40, RotationDegrees: 0),
+        };
+
+        var hits = PlacementHitTester.HitTestRect(placements, worldX1: -10, worldY1: -10, worldX2: 60, worldY2: 60);
+
+        Assert.Equal([1L], hits);
+    }
+
+    [Fact]
+    public void HitTestRect_ReturnsPlacementsPartiallyOverlappingTheRectangle()
+    {
+        var placements = new[] { new HitTestPlacement(1, X: 0, Y: 0, Width: 40, Height: 40, RotationDegrees: 0) };
+
+        var hits = PlacementHitTester.HitTestRect(placements, worldX1: 30, worldY1: 30, worldX2: 100, worldY2: 100);
+
+        Assert.Equal([1L], hits);
+    }
+
+    [Fact]
+    public void HitTestRect_ExcludesPlacementsOutsideTheRectangle()
+    {
+        var placements = new[] { new HitTestPlacement(1, X: 0, Y: 0, Width: 40, Height: 40, RotationDegrees: 0) };
+
+        var hits = PlacementHitTester.HitTestRect(placements, worldX1: 100, worldY1: 100, worldX2: 200, worldY2: 200);
+
+        Assert.Empty(hits);
+    }
+
+    [Fact]
+    public void HitTestRect_WorksRegardlessOfCornerOrder()
+    {
+        var placements = new[] { new HitTestPlacement(1, X: 0, Y: 0, Width: 40, Height: 40, RotationDegrees: 0) };
+
+        // Start corner is bottom-right of end corner — min/max must be derived, not assumed ordered.
+        var hits = PlacementHitTester.HitTestRect(placements, worldX1: 60, worldY1: 60, worldX2: -10, worldY2: -10);
+
+        Assert.Equal([1L], hits);
+    }
+
+    [Fact]
+    public void HitTestRect_FullContainment_ExcludesAPlacementOnlyPartiallyOverlapping()
+    {
+        var placements = new[] { new HitTestPlacement(1, X: 0, Y: 0, Width: 40, Height: 40, RotationDegrees: 0) };
+
+        var hits = PlacementHitTester.HitTestRect(placements, worldX1: 30, worldY1: 30, worldX2: 100, worldY2: 100, requireFullContainment: true);
+
+        Assert.Empty(hits);
+    }
+
+    [Fact]
+    public void HitTestRect_FullContainment_IncludesAPlacementEntirelyInsideTheRectangle()
+    {
+        var placements = new[]
+        {
+            new HitTestPlacement(1, X: 0, Y: 0, Width: 40, Height: 40, RotationDegrees: 0),
+            new HitTestPlacement(2, X: 100, Y: 100, Width: 40, Height: 40, RotationDegrees: 0),
+        };
+
+        var hits = PlacementHitTester.HitTestRect(placements, worldX1: -10, worldY1: -10, worldX2: 60, worldY2: 60, requireFullContainment: true);
+
+        Assert.Equal([1L], hits);
+    }
 }

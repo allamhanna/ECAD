@@ -1,7 +1,6 @@
-<Window x:Class="Ecad.App.Views.SymbolBrowserWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Symbol Browser" Height="500" Width="700">
+<UserControl x:Class="Ecad.App.Views.SymbolBrowserView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <DockPanel Margin="8">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
             <Button Content="Refresh" Command="{Binding RefreshCommand}" Padding="8,2" Margin="0,0,12,0"/>
@@ -29,4 +28,4 @@
             </ItemsControl>
         </ScrollViewer>
     </DockPanel>
-</Window>
+</UserControl>

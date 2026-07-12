@@ -1,0 +1,19 @@
+<UserControl x:Class="Ecad.App.Views.GridEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Ecad.App.Views">
+    <TabControl Margin="4">
+        <TabItem Header="Devices">
+            <local:DevicesGridView DataContext="{Binding DevicesTab}"/>
+        </TabItem>
+        <TabItem Header="Connections">
+            <local:ConnectionsGridView DataContext="{Binding ConnectionsTab}"/>
+        </TabItem>
+        <TabItem Header="Cables">
+            <local:CablesGridView DataContext="{Binding CablesTab}"/>
+        </TabItem>
+        <TabItem Header="Terminations">
+            <local:TerminationsGridView DataContext="{Binding TerminationsTab}"/>
+        </TabItem>
+    </TabControl>
+</UserControl>

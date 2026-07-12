@@ -6,17 +6,17 @@ using Ecad.Core.ValueObjects;
 namespace Ecad.App.Views;
 
 /// <summary>
-/// IEC 81346 segment-aware tag editor (M6). Two modes:
-/// - Placement mode (ctor taking existingDevices): a device picker above the segment fields —
-///   pick "New Device" (default) to create one with the given segments, or pick an existing device
-///   to attach the new placement to it instead (segment fields disabled, tag inherited).
-/// - Rename mode (ctor taking a Device): no picker, just edits that device's own segments.
+/// IEC 81346 segment-aware tag editor (M6) for the new-placement tag prompt: a device picker above
+/// the segment fields — pick "New Device" (default) to create one with the given segments, or pick an
+/// existing device to attach the new placement to it instead (segment fields disabled, tag inherited).
+/// The rename-an-existing-placement mode this dialog used to also cover (double-click) moved to
+/// SchematicPageView's docked device panel in M10 Phase 4 (ADR-017) — non-modal, so the canvas stays
+/// interactive while it's open.
 /// </summary>
 public partial class DeviceTagDialog : Window
 {
     private readonly IReadOnlyList<Device> _existingDevices;
     private readonly Func<string?, string?, string, long?, bool> _isTagAvailable;
-    private readonly long? _excludingDeviceId;
 
     public DeviceTagDialog(IReadOnlyList<Device> existingDevices, string? suggestedFunction, string? suggestedLocation,
         string suggestedDesignation, Func<string?, string?, string, long?, bool> isTagAvailable)
@@ -24,7 +24,6 @@ public partial class DeviceTagDialog : Window
         InitializeComponent();
         _existingDevices = existingDevices;
         _isTagAvailable = isTagAvailable;
-        _excludingDeviceId = null;
 
         DeviceCombo.Items.Add("— New Device —");
         foreach (var device in existingDevices) DeviceCombo.Items.Add(FormatTag(device));
@@ -34,29 +33,6 @@ public partial class DeviceTagDialog : Window
         FunctionBox.Text = suggestedFunction ?? string.Empty;
         LocationBox.Text = suggestedLocation ?? string.Empty;
         DesignationBox.Text = suggestedDesignation;
-
-        WireLivePreview();
-        UpdatePreview();
-        Loaded += (_, _) =>
-        {
-            DesignationBox.Focus();
-            DesignationBox.SelectAll();
-        };
-    }
-
-    public DeviceTagDialog(Device device, Func<string?, string?, string, long?, bool> isTagAvailable)
-    {
-        InitializeComponent();
-        _existingDevices = [];
-        _isTagAvailable = isTagAvailable;
-        _excludingDeviceId = device.Id;
-
-        DeviceLabel.Visibility = Visibility.Collapsed;
-        DeviceCombo.Visibility = Visibility.Collapsed;
-
-        FunctionBox.Text = device.FunctionSegment ?? string.Empty;
-        LocationBox.Text = device.LocationSegment ?? string.Empty;
-        DesignationBox.Text = device.DeviceTagSegment;
 
         WireLivePreview();
         UpdatePreview();
@@ -102,7 +78,7 @@ public partial class DeviceTagDialog : Window
 
     private void OnOkClick(object sender, RoutedEventArgs e)
     {
-        if (DeviceCombo.Visibility == Visibility.Visible && DeviceCombo.SelectedIndex > 0)
+        if (DeviceCombo.SelectedIndex > 0)
         {
             SelectedExistingDeviceId = _existingDevices[DeviceCombo.SelectedIndex - 1].Id;
             DialogResult = true;
@@ -119,7 +95,7 @@ public partial class DeviceTagDialog : Window
         var function = NullIfBlank(FunctionBox.Text);
         var location = NullIfBlank(LocationBox.Text);
 
-        if (!_isTagAvailable(function, location, designation, _excludingDeviceId))
+        if (!_isTagAvailable(function, location, designation, null))
         {
             ShowValidation($"Tag '{new DeviceTag(function, location, designation)}' is already used in this project.");
             return;
