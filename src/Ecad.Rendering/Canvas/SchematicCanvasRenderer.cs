@@ -12,12 +12,43 @@ public sealed record PlacementRenderInfo(long Id, string DeviceTag, double X, do
 /// <summary>A DevicePin's current world position — drawn as a small marker so there's something to click (M7).</summary>
 public sealed record PinRenderInfo(long DevicePinId, WorldPoint Position);
 
-/// <summary>A Connection's already-routed path (see OrthogonalRouter) plus its wire number, ready to draw (M7).</summary>
-public sealed record WireRenderInfo(long ConnectionId, string? WireNumber, IReadOnlyList<WorldPoint> Route);
+/// <summary>A Connection's already-routed path (see OrthogonalRouter) — a plain line only; a
+/// connection has no independent selectable identity and carries no definition-point data of its own
+/// (see DefinitionPointRenderInfo, a top-level, independent entity).</summary>
+public sealed record WireRenderInfo(long ConnectionId, IReadOnlyList<WorldPoint> Route);
 
-/// <summary>Everything M7 adds to a page's render pass, bundled to keep Render's own signature manageable.</summary>
+/// <summary>A definition point — an independent, symbol-like canvas entity with its own absolute
+/// position, drawn every frame exactly like a PlacementRenderInfo regardless of whether any wire is
+/// nearby. Optionally attached to a Connection (not represented here — rendering doesn't need to know).</summary>
+public sealed record DefinitionPointRenderInfo(long Id, double X, double Y, int RotationDegrees, string? WireNumber, string? Color, double? CrossSectionMm2);
+
+/// <summary>A cable definition line — an independent, symbol-like canvas entity with its own absolute
+/// endpoints, drawn every frame regardless of which wires it currently crosses (rendering doesn't
+/// recompute crossings; the ViewModel already resolved them into CableLineCrossingRenderInfo).</summary>
+public sealed record CableLineRenderInfo(long Id, double X1, double Y1, double X2, double Y2, string CableTag);
+
+/// <summary>Where a CableLine currently, geometrically crosses one of its assigned wires — resolved by
+/// the ViewModel each frame (a pure, read-only lookup against the wire's live route), not stored. If a
+/// wire has since moved away and no longer crosses the line, no render info is produced for it that
+/// frame; the underlying assignment is untouched. Id is the underlying CableLineCrossing's own row id,
+/// so it can be independently selected/rotated just like a DefinitionPoint.</summary>
+public sealed record CableLineCrossingRenderInfo(long Id, double X, double Y, int RotationDegrees,
+    string CableTag, int CoreNumber, string? Color, double? CrossSectionMm2);
+
+/// <summary>Everything M7 adds to a page's render pass, bundled to keep Render's own signature
+/// manageable. A wire/Connection itself is never selectable or highlighted — only a definition point
+/// is (SelectedDefinitionPointIds, keyed by the point's own Id); a connection has no independent
+/// identity to select, matching ADR-015's "no standalone delete" for the Grid Editor, extended to the
+/// canvas here.</summary>
 public sealed record WiringRenderInfo(IReadOnlyList<PinRenderInfo> Pins, IReadOnlyList<WireRenderInfo> Wires,
-    long? SelectedConnectionId, IReadOnlyList<WorldPoint> Junctions, IReadOnlyList<WorldPoint>? WireDrawPreviewRoute);
+    IReadOnlyList<DefinitionPointRenderInfo> DefinitionPoints, IReadOnlyCollection<long> SelectedDefinitionPointIds,
+    IReadOnlyList<WorldPoint> Junctions, IReadOnlyList<WorldPoint>? WireDrawPreviewRoute,
+    IReadOnlyList<CableLineRenderInfo> CableLines, IReadOnlyCollection<long> SelectedCableLineIds,
+    IReadOnlyList<CableLineCrossingRenderInfo> CableLineCrossings, IReadOnlyCollection<long> SelectedCableLineCrossingIds);
+
+/// <summary>An in-progress rubber-band selection drag, in screen coordinates — Start is where the
+/// right button first went down, Current tracks the live mouse position.</summary>
+public sealed record RubberBandRenderInfo(double StartX, double StartY, double CurrentX, double CurrentY);
 
 /// <summary>Pure drawing logic for the schematic canvas — no WPF dependency, driven by SchematicPageWindow's PaintSurface handler.</summary>
 public static class SchematicCanvasRenderer
@@ -26,22 +57,40 @@ public static class SchematicCanvasRenderer
     private static readonly SKColor PinColor = new(160, 30, 30);
     private static readonly SKColor WireColor = new(30, 30, 30);
     private static readonly SKColor JunctionColor = new(30, 30, 30);
+    private static readonly SKColor CableLineColor = new(140, 90, 20);
+    private static readonly SKColor DefinitionPointColor = new(200, 30, 30); // red — both a wire's definition point and a cable crossing's tick
 
     public static void Render(SKCanvas canvas, CanvasViewport viewport, int surfaceWidth, int surfaceHeight,
-        IReadOnlyList<PlacementRenderInfo> placements, long? selectedPlacementId, WiringRenderInfo wiring)
+        IReadOnlyList<PlacementRenderInfo> placements, IReadOnlyCollection<long> selectedPlacementIds, WiringRenderInfo wiring,
+        RubberBandRenderInfo? rubberBand = null)
     {
         canvas.Clear(SKColors.White);
         DrawGrid(canvas, viewport, surfaceWidth, surfaceHeight);
-        DrawWires(canvas, viewport, wiring.Wires, wiring.SelectedConnectionId);
+        DrawWires(canvas, viewport, wiring.Wires);
         DrawJunctions(canvas, viewport, wiring.Junctions);
 
         foreach (var placement in placements)
         {
-            DrawPlacement(canvas, viewport, placement, isSelected: placement.Id == selectedPlacementId);
+            DrawPlacement(canvas, viewport, placement, isSelected: selectedPlacementIds.Contains(placement.Id));
+        }
+
+        foreach (var definitionPoint in wiring.DefinitionPoints)
+        {
+            DrawDefinitionPoint(canvas, viewport, definitionPoint, isSelected: wiring.SelectedDefinitionPointIds.Contains(definitionPoint.Id));
+        }
+
+        foreach (var cableLine in wiring.CableLines)
+        {
+            DrawCableLine(canvas, viewport, cableLine, isSelected: wiring.SelectedCableLineIds.Contains(cableLine.Id));
+        }
+        foreach (var crossing in wiring.CableLineCrossings)
+        {
+            DrawCableLineCrossing(canvas, viewport, crossing, isSelected: wiring.SelectedCableLineCrossingIds.Contains(crossing.Id));
         }
 
         DrawPins(canvas, viewport, wiring.Pins);
         if (wiring.WireDrawPreviewRoute is { Count: > 0 } preview) DrawWireDrawPreview(canvas, viewport, preview);
+        if (rubberBand is not null) DrawRubberBand(canvas, rubberBand);
     }
 
     private static void DrawGrid(SKCanvas canvas, CanvasViewport viewport, int width, int height)
@@ -49,7 +98,12 @@ public static class SchematicCanvasRenderer
         var spacingScreen = viewport.GridSpacing * viewport.Zoom;
         if (spacingScreen < 4) return; // too dense to be worth drawing
 
-        using var paint = new SKPaint { Color = GridColor, StrokeWidth = 1, IsAntialias = false };
+        // Dots, not lines: GridSpacing only ever affects where these dots land and where
+        // CanvasViewport.SnapToGrid rounds a new/dragged position to — a Placement's own X/Y is
+        // always stored in absolute world units, so changing this at any time (even a large project
+        // with existing parts) never moves anything already placed, only the grid's own density.
+        using var paint = new SKPaint { Color = GridColor, IsAntialias = true, Style = SKPaintStyle.Fill };
+        const float dotRadius = 1.5f;
 
         var (worldLeft, worldTop) = viewport.ScreenToWorld(0, 0);
         var startX = Math.Floor(worldLeft / viewport.GridSpacing) * viewport.GridSpacing;
@@ -59,14 +113,13 @@ public static class SchematicCanvasRenderer
         {
             var (screenX, _) = viewport.WorldToScreen(worldX, 0);
             if (screenX > width) break;
-            canvas.DrawLine((float)screenX, 0, (float)screenX, height, paint);
-        }
 
-        for (var worldY = startY; ; worldY += viewport.GridSpacing)
-        {
-            var (_, screenY) = viewport.WorldToScreen(0, worldY);
-            if (screenY > height) break;
-            canvas.DrawLine(0, (float)screenY, width, (float)screenY, paint);
+            for (var worldY = startY; ; worldY += viewport.GridSpacing)
+            {
+                var (_, screenY) = viewport.WorldToScreen(0, worldY);
+                if (screenY > height) break;
+                canvas.DrawCircle((float)screenX, (float)screenY, dotRadius, paint);
+            }
         }
     }
 
@@ -123,29 +176,86 @@ public static class SchematicCanvasRenderer
         }
     }
 
-    private static void DrawWires(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WireRenderInfo> wires, long? selectedConnectionId)
+    private static void DrawWires(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WireRenderInfo> wires)
     {
+        // The wire line itself never highlights — a connection has no independent selectable identity
+        // (see WiringRenderInfo's own doc comment); only a definition point's tick does.
+        using var wirePaint = new SKPaint { Color = WireColor, StrokeWidth = 1.5f, Style = SKPaintStyle.Stroke, IsAntialias = true };
+
         foreach (var wire in wires)
-        {
-            var isSelected = wire.ConnectionId == selectedConnectionId;
-            using var wirePaint = new SKPaint
-            {
-                Color = isSelected ? SKColors.DodgerBlue : WireColor,
-                StrokeWidth = isSelected ? 2.5f : 1.5f,
-                Style = SKPaintStyle.Stroke,
-                IsAntialias = true,
-            };
-
             DrawRoute(canvas, viewport, wire.Route, wirePaint);
+    }
 
-            if (string.IsNullOrEmpty(wire.WireNumber) || wire.Route.Count == 0) continue;
+    private static void DrawDefinitionPoint(SKCanvas canvas, CanvasViewport viewport, DefinitionPointRenderInfo definitionPoint, bool isSelected)
+    {
+        var (screenX, screenY) = viewport.WorldToScreen(definitionPoint.X, definitionPoint.Y);
+        var tickColor = isSelected ? SKColors.DodgerBlue : DefinitionPointColor;
+        DrawDefinitionPointGlyph(canvas, screenX, screenY, definitionPoint.RotationDegrees, tickColor, definitionPoint.WireNumber, definitionPoint.Color, definitionPoint.CrossSectionMm2);
+    }
 
-            var mid = wire.Route[wire.Route.Count / 2];
-            var (midScreenX, midScreenY) = viewport.WorldToScreen(mid.X, mid.Y);
-            using var numberPaint = new SKPaint { Color = WireColor, IsAntialias = true };
-            using var numberFont = new SKFont { Size = 9 };
-            canvas.DrawText(wire.WireNumber, (float)midScreenX + 3, (float)midScreenY - 3, numberFont, numberPaint);
+    /// <summary>The diagonal-tick-plus-label glyph shared by wire definition points and cable line
+    /// crossings — same visual language for "something was assigned here" across both features.
+    /// RotationDegrees only spins the tick itself (R key, 90° per press); the label always stays
+    /// upright at a fixed offset for readability, the same way DrawPlacement's tag text never rotates
+    /// with the symbol picture.</summary>
+    private static void DrawDefinitionPointGlyph(SKCanvas canvas, double screenX, double screenY, int rotationDegrees, SKColor tickColor,
+        string? wireNumber, string? color, double? crossSectionMm2)
+    {
+        const float tickHalfLength = 5f;
+
+        using (var tickPaint = new SKPaint { Color = tickColor, StrokeWidth = 1.5f, Style = SKPaintStyle.Stroke, IsAntialias = true })
+        {
+            canvas.Save();
+            canvas.Translate((float)screenX, (float)screenY);
+            canvas.RotateDegrees(rotationDegrees);
+            canvas.DrawLine(-tickHalfLength, tickHalfLength, tickHalfLength, -tickHalfLength, tickPaint);
+            canvas.Restore();
         }
+
+        var crossSectionAndColor = string.Join(" ", new[]
+        {
+            crossSectionMm2 is { } crossSection ? $"{crossSection}mm²" : null,
+            color,
+        }.Where(s => !string.IsNullOrEmpty(s)));
+
+        var labelLines = new List<string>();
+        if (!string.IsNullOrEmpty(wireNumber)) labelLines.Add(wireNumber);
+        if (crossSectionAndColor.Length > 0) labelLines.Add(crossSectionAndColor);
+        if (labelLines.Count == 0) return;
+
+        using var labelPaint = new SKPaint { Color = tickColor, IsAntialias = true };
+        using var labelFont = new SKFont { Size = 9 };
+        const float lineHeight = 11f;
+        for (var i = 0; i < labelLines.Count; i++)
+            canvas.DrawText(labelLines[i], (float)screenX + tickHalfLength + 2, (float)screenY - tickHalfLength + i * lineHeight, labelFont, labelPaint);
+    }
+
+    private static void DrawCableLine(SKCanvas canvas, CanvasViewport viewport, CableLineRenderInfo cableLine, bool isSelected)
+    {
+        var (x1, y1) = viewport.WorldToScreen(cableLine.X1, cableLine.Y1);
+        var (x2, y2) = viewport.WorldToScreen(cableLine.X2, cableLine.Y2);
+
+        using var linePaint = new SKPaint
+        {
+            Color = isSelected ? SKColors.DodgerBlue : CableLineColor,
+            StrokeWidth = 2f,
+            Style = SKPaintStyle.Stroke,
+            IsAntialias = true,
+            PathEffect = SKPathEffect.CreateDash([6, 3], 0),
+        };
+        canvas.DrawLine((float)x1, (float)y1, (float)x2, (float)y2, linePaint);
+
+        using var labelPaint = new SKPaint { Color = linePaint.Color, IsAntialias = true };
+        using var labelFont = new SKFont { Size = 10 };
+        canvas.DrawText(cableLine.CableTag, (float)x1 + 4, (float)y1 - 4, labelFont, labelPaint);
+    }
+
+    private static void DrawCableLineCrossing(SKCanvas canvas, CanvasViewport viewport, CableLineCrossingRenderInfo crossing, bool isSelected)
+    {
+        var (screenX, screenY) = viewport.WorldToScreen(crossing.X, crossing.Y);
+        var tickColor = isSelected ? SKColors.DodgerBlue : DefinitionPointColor;
+        DrawDefinitionPointGlyph(canvas, screenX, screenY, crossing.RotationDegrees, tickColor,
+            $"{crossing.CableTag}/{crossing.CoreNumber}", crossing.Color, crossing.CrossSectionMm2);
     }
 
     private static void DrawJunctions(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WorldPoint> junctions)
@@ -171,6 +281,27 @@ public static class SchematicCanvasRenderer
             PathEffect = SKPathEffect.CreateDash([4, 4], 0),
         };
         DrawRoute(canvas, viewport, route, previewPaint);
+    }
+
+    private static void DrawRubberBand(SKCanvas canvas, RubberBandRenderInfo rubberBand)
+    {
+        var left = (float)Math.Min(rubberBand.StartX, rubberBand.CurrentX);
+        var top = (float)Math.Min(rubberBand.StartY, rubberBand.CurrentY);
+        var right = (float)Math.Max(rubberBand.StartX, rubberBand.CurrentX);
+        var bottom = (float)Math.Max(rubberBand.StartY, rubberBand.CurrentY);
+
+        using var fillPaint = new SKPaint { Color = SKColors.DodgerBlue.WithAlpha(40), Style = SKPaintStyle.Fill };
+        canvas.DrawRect(left, top, right - left, bottom - top, fillPaint);
+
+        using var strokePaint = new SKPaint
+        {
+            Color = SKColors.DodgerBlue,
+            Style = SKPaintStyle.Stroke,
+            StrokeWidth = 1,
+            IsAntialias = true,
+            PathEffect = SKPathEffect.CreateDash([4, 4], 0),
+        };
+        canvas.DrawRect(left, top, right - left, bottom - top, strokePaint);
     }
 
     private static void DrawRoute(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WorldPoint> route, SKPaint paint)

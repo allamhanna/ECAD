@@ -74,50 +74,55 @@ public class ConnectionRepository(SqliteConnection connection)
         connection.Execute("UPDATE Connection SET WireNumber = @wireNumber WHERE Id = @connectionId;", new { connectionId, wireNumber });
     }
 
-    /// <summary>Exact-match lookup for wire-number-uniqueness checks, excluding a given Connection (for rename-in-place) — same pattern as DeviceRepository.FindByTag.</summary>
-    public Connection? FindByWireNumber(long projectId, string wireNumber, long? excludingConnectionId)
+    public void UpdateConnectionColor(long connectionId, string? color)
     {
-        return connection.QuerySingleOrDefault<Connection>(
-            """
-            SELECT c.* FROM Connection c
-            JOIN DevicePin dp ON dp.Id = c.FromDevicePinId
-            JOIN Device d ON d.Id = dp.DeviceId
-            WHERE d.ProjectId = @projectId
-              AND c.WireNumber = @wireNumber
-              AND (@excludingConnectionId IS NULL OR c.Id != @excludingConnectionId)
-            LIMIT 1;
-            """,
-            new { projectId, wireNumber, excludingConnectionId });
+        connection.Execute("UPDATE Connection SET Color = @color WHERE Id = @connectionId;", new { connectionId, color });
     }
 
-    /// <summary>All assigned wire numbers in this project (via each connection's From pin's Device) — used for uniqueness checks and auto-numbering suggestions.</summary>
-    public IReadOnlyList<string> GetAllWireNumbers(long projectId)
+    public void UpdateConnectionCrossSection(long connectionId, double? crossSectionMm2)
     {
-        return connection.Query<string>(
+        connection.Execute("UPDATE Connection SET CrossSectionMm2 = @crossSectionMm2 WHERE Id = @connectionId;", new { connectionId, crossSectionMm2 });
+    }
+
+    public void UpdateConnectionCable(long connectionId, long? cableId, long? cableCoreId)
+    {
+        connection.Execute("UPDATE Connection SET CableId = @cableId, CableCoreId = @cableCoreId WHERE Id = @connectionId;", new { connectionId, cableId, cableCoreId });
+    }
+
+    public void UpdateConnectionEndpoints(long connectionId, long fromDevicePinId, long toDevicePinId)
+    {
+        connection.Execute(
+            "UPDATE Connection SET FromDevicePinId = @fromDevicePinId, ToDevicePinId = @toDevicePinId WHERE Id = @connectionId;",
+            new { connectionId, fromDevicePinId, toDevicePinId });
+    }
+
+    /// <summary>M8: guards Cable deletion (ProjectSession.CanDeleteCable) — a Cable still referenced
+    /// by a Connection must not be deleted silently.</summary>
+    public bool AnyConnectionReferencesCable(long cableId)
+    {
+        var count = connection.ExecuteScalar<long>("SELECT COUNT(*) FROM Connection WHERE CableId = @cableId;", new { cableId });
+        return count > 0;
+    }
+
+    /// <summary>M8: run before deleting a CableCore, so any Connection assigned to that core is
+    /// un-assigned (CableCoreId only) rather than blocking the core's deletion or orphaning the FK.</summary>
+    public void ClearCableCoreReferences(long cableCoreId)
+    {
+        connection.Execute("UPDATE Connection SET CableCoreId = NULL WHERE CableCoreId = @cableCoreId;", new { cableCoreId });
+    }
+
+    /// <summary>Every Connection in the project, regardless of page (M8: the Connections grid isn't
+    /// limited to same-page wiring the way the canvas's GetConnectionsForPage is).</summary>
+    public IReadOnlyList<Connection> GetAllConnectionsForProject(long projectId)
+    {
+        return connection.Query<Connection>(
             """
-            SELECT c.WireNumber
+            SELECT c.*
             FROM Connection c
             JOIN DevicePin dp ON dp.Id = c.FromDevicePinId
             JOIN Device d ON d.Id = dp.DeviceId
-            WHERE d.ProjectId = @projectId AND c.WireNumber IS NOT NULL;
-            """,
-            new { projectId }).ToList();
-    }
-
-    /// <summary>Every Connection in the project, ordered by its From pin's page SortOrder then Id — the deterministic order "Renumber Wires" assigns fresh sequential numbers in.</summary>
-    public IReadOnlyList<long> GetConnectionIdsForRenumbering(long projectId)
-    {
-        return connection.Query<long>(
-            """
-            SELECT c.Id
-            FROM Connection c
-            JOIN DevicePin dp ON dp.Id = c.FromDevicePinId
-            JOIN Device d ON d.Id = dp.DeviceId
-            JOIN PlacementPin pp ON pp.DevicePinId = dp.Id
-            JOIN Placement p ON p.Id = pp.PlacementId
-            JOIN Page pg ON pg.Id = p.PageId
             WHERE d.ProjectId = @projectId
-            ORDER BY pg.SortOrder, c.Id;
+            ORDER BY c.Id;
             """,
             new { projectId }).ToList();
     }
@@ -149,6 +154,50 @@ public class ConnectionRepository(SqliteConnection connection)
             .ToList();
     }
 
+    /// <summary>M9: every ConnectionEnd in the project, joined with its parent Connection's
+    /// WireNumber/CrossSectionMm2/endpoint DevicePinIds — the Terminations tab's one read query
+    /// (Section 6.3's filterable view). Endpoint labels are resolved by the caller, not here — see
+    /// ConnectionEndWithContext's own doc comment.</summary>
+    public IReadOnlyList<ConnectionEndWithContext> GetAllConnectionEndsWithContext(long projectId)
+    {
+        return connection.Query<ConnectionEndWithContextRow>(
+            """
+            SELECT ce.Id, ce.ConnectionId, ce.End, ce.TerminationEnabled, ce.TerminationType,
+                   ce.TerminationPartId, ce.StrippingLengthMm,
+                   c.WireNumber, c.CrossSectionMm2, c.FromDevicePinId, c.ToDevicePinId
+            FROM ConnectionEnd ce
+            JOIN Connection c ON c.Id = ce.ConnectionId
+            JOIN DevicePin dp ON dp.Id = c.FromDevicePinId
+            JOIN Device d ON d.Id = dp.DeviceId
+            WHERE d.ProjectId = @projectId
+            ORDER BY c.Id, ce.End;
+            """,
+            new { projectId })
+            .Select(r => r.ToModel())
+            .ToList();
+    }
+
+    public void UpdateConnectionEndTermination(long connectionEndId, bool terminationEnabled,
+        TerminationType terminationType, long? terminationPartId, double? strippingLengthMm)
+    {
+        connection.Execute(
+            """
+            UPDATE ConnectionEnd
+            SET TerminationEnabled = @terminationEnabled, TerminationType = @terminationTypeValue,
+                TerminationPartId = @terminationPartId, StrippingLengthMm = @strippingLengthMm
+            WHERE Id = @connectionEndId;
+            """,
+            new { connectionEndId, terminationEnabled, terminationTypeValue = (int)terminationType, terminationPartId, strippingLengthMm });
+    }
+
+    /// <summary>The narrow single-field setter the bulk-assign path uses — same "one setter per
+    /// grid-editable column" precedent as UpdateConnectionColor/UpdateConnectionCrossSection.</summary>
+    public void UpdateConnectionEndPart(long connectionEndId, long? terminationPartId)
+    {
+        connection.Execute("UPDATE ConnectionEnd SET TerminationPartId = @terminationPartId WHERE Id = @connectionEndId;",
+            new { connectionEndId, terminationPartId });
+    }
+
     // long/double rather than int/bool to match Dapper's exact-type-match constructor materialization
     // against SQLite's underlying INTEGER/REAL reader types (see PartRepository.PartRow for detail).
     private sealed record ConnectionEndRow(long Id, long ConnectionId, long End, long TerminationEnabled,
@@ -163,6 +212,26 @@ public class ConnectionRepository(SqliteConnection connection)
             TerminationType = (TerminationType)(int)TerminationType,
             TerminationPartId = TerminationPartId,
             StrippingLengthMm = StrippingLengthMm,
+        };
+    }
+
+    private sealed record ConnectionEndWithContextRow(long Id, long ConnectionId, long End, long TerminationEnabled,
+        long TerminationType, long? TerminationPartId, double? StrippingLengthMm,
+        string? WireNumber, double? CrossSectionMm2, long FromDevicePinId, long ToDevicePinId)
+    {
+        public ConnectionEndWithContext ToModel() => new()
+        {
+            Id = Id,
+            ConnectionId = ConnectionId,
+            End = (ConnectionEndDesignator)(int)End,
+            TerminationEnabled = TerminationEnabled != 0,
+            TerminationType = (TerminationType)(int)TerminationType,
+            TerminationPartId = TerminationPartId,
+            StrippingLengthMm = StrippingLengthMm,
+            WireNumber = WireNumber,
+            CrossSectionMm2 = CrossSectionMm2,
+            FromDevicePinId = FromDevicePinId,
+            ToDevicePinId = ToDevicePinId,
         };
     }
 }

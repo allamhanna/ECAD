@@ -24,6 +24,29 @@ public static class WireHitTester
         return null;
     }
 
+    /// <summary>Converts a click into "which wire, and where along it" — the nearest wire within
+    /// tolerance, plus its click position expressed as a 0..1 length-fraction of that wire's route
+    /// (RouteMath.ProjectToT). Used to place/reposition a connection definition point at the exact
+    /// spot clicked, rather than just identifying which wire was clicked.</summary>
+    public static (long ConnectionId, double PositionT)? HitTestWireForDefinitionPoint(WorldPoint point, IReadOnlyList<HitTestWire> wires, double tolerance)
+    {
+        long? bestConnectionId = null;
+        var bestT = 0.0;
+        var bestDistance = double.MaxValue;
+
+        foreach (var wire in wires)
+        {
+            var (t, distance) = RouteMath.ProjectToT(wire.Route, point);
+            if (distance > tolerance || distance >= bestDistance) continue;
+
+            bestDistance = distance;
+            bestConnectionId = wire.ConnectionId;
+            bestT = t;
+        }
+
+        return bestConnectionId is { } connectionId ? (connectionId, bestT) : null;
+    }
+
     private static bool IsNearRoute(WorldPoint point, IReadOnlyList<WorldPoint> route, double tolerance)
     {
         for (var i = 0; i < route.Count - 1; i++)

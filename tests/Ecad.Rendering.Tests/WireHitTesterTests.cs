@@ -54,4 +54,41 @@ public class WireHitTesterTests
 
         Assert.Null(hit);
     }
+
+    [Fact]
+    public void HitTestWireForDefinitionPoint_NearStraightSegment_ReturnsConnectionAndPositionT()
+    {
+        var wires = new[] { new HitTestWire(100, [new WorldPoint(0, 0), new WorldPoint(40, 0)]) };
+
+        var hit = WireHitTester.HitTestWireForDefinitionPoint(new WorldPoint(10, 0), wires, tolerance: 3);
+
+        Assert.NotNull(hit);
+        Assert.Equal(100, hit!.Value.ConnectionId);
+        Assert.Equal(0.25, hit.Value.PositionT, precision: 6);
+    }
+
+    [Fact]
+    public void HitTestWireForDefinitionPoint_FarFromEveryWire_ReturnsNull()
+    {
+        var wires = new[] { new HitTestWire(100, [new WorldPoint(0, 0), new WorldPoint(40, 0)]) };
+
+        var hit = WireHitTester.HitTestWireForDefinitionPoint(new WorldPoint(20, 30), wires, tolerance: 3);
+
+        Assert.Null(hit);
+    }
+
+    [Fact]
+    public void HitTestWireForDefinitionPoint_TwoWiresWithinTolerance_ReturnsTheNearestOne()
+    {
+        var wires = new[]
+        {
+            new HitTestWire(1, [new WorldPoint(0, 0), new WorldPoint(40, 0)]),
+            new HitTestWire(2, [new WorldPoint(0, 2), new WorldPoint(40, 2)]),
+        };
+
+        var hit = WireHitTester.HitTestWireForDefinitionPoint(new WorldPoint(20, 1.6), wires, tolerance: 3);
+
+        Assert.NotNull(hit);
+        Assert.Equal(2, hit!.Value.ConnectionId);
+    }
 }

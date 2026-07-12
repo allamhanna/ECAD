@@ -228,7 +228,7 @@ internal sealed class CreateConnectionCommand(ProjectSession session, SchematicP
     {
         var connection = session.CreateConnection(fromDevicePinId, toDevicePinId);
         _connectionId = connection.Id;
-        viewModel.AddConnectionToView(connection.Id, connection.WireNumber, fromDevicePinId, toDevicePinId);
+        viewModel.AddConnectionToView(connection.Id, fromDevicePinId, toDevicePinId);
     }
 
     public void Undo()
@@ -241,8 +241,10 @@ internal sealed class CreateConnectionCommand(ProjectSession session, SchematicP
 /// <summary>
 /// Deletes a wire. Undo recreates it (new row Id) rather than restoring the original — the same
 /// recreate-not-restore simplification as DeleteCommand (ADR-007/ADR-009), since ConnectionEnd rows
-/// cascade away and there's nothing left to restore by Id. The recreated wire's number is set back
-/// to what it was, even though a fresh CreateConnection would otherwise auto-assign a new one.
+/// cascade away and there's nothing left to restore by Id. A definition point attached to the deleted
+/// wire survives independently (the database detaches it, ON DELETE SET NULL) rather than being
+/// restored here — reattaching it to whatever wire ends up in its place is a manual drag, same as any
+/// other attach; see DECISIONS.md.
 /// </summary>
 internal sealed class DeleteConnectionCommand : IUndoableCommand
 {
@@ -250,7 +252,6 @@ internal sealed class DeleteConnectionCommand : IUndoableCommand
     private readonly SchematicPageViewModel _viewModel;
     private readonly long _fromDevicePinId;
     private readonly long _toDevicePinId;
-    private readonly string? _wireNumber;
     private long _connectionId;
 
     public DeleteConnectionCommand(ProjectSession session, SchematicPageViewModel viewModel, ConnectionViewItem snapshot)
@@ -260,56 +261,326 @@ internal sealed class DeleteConnectionCommand : IUndoableCommand
         _connectionId = snapshot.ConnectionId;
         _fromDevicePinId = snapshot.FromDevicePinId;
         _toDevicePinId = snapshot.ToDevicePinId;
-        _wireNumber = snapshot.WireNumber;
     }
 
     public void Do()
     {
         _session.DeleteConnection(_connectionId);
         _viewModel.RemoveConnectionFromView(_connectionId);
+        _viewModel.DetachDefinitionPointsFromConnectionView(_connectionId);
     }
 
     public void Undo()
     {
         var connection = _session.CreateConnection(_fromDevicePinId, _toDevicePinId);
         _connectionId = connection.Id;
-        var wireNumber = _wireNumber ?? connection.WireNumber;
-        if (wireNumber != connection.WireNumber) _session.RenameWireNumber(connection.Id, wireNumber!);
-        _viewModel.AddConnectionToView(connection.Id, wireNumber, _fromDevicePinId, _toDevicePinId);
+        _viewModel.AddConnectionToView(connection.Id, _fromDevicePinId, _toDevicePinId);
     }
 }
 
-/// <summary>Renames a Connection's wire number between two known values.</summary>
-internal sealed class RenameWireNumberCommand(ProjectSession session, SchematicPageViewModel viewModel, long connectionId, string fromWireNumber, string toWireNumber) : IUndoableCommand
+/// <summary>Places a new definition point. Undo deletes it — the same recreate-not-restore shape as
+/// PlaceSymbolCommand/CreateConnectionCommand (a fresh Do() after undo gets a new row Id).</summary>
+internal sealed class PlaceDefinitionPointCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId,
+    double x, double y, string? wireNumber, string? color, double? crossSectionMm2, long? connectionId) : IUndoableCommand
 {
+    private long _definitionPointId;
+
     public void Do()
     {
-        session.RenameWireNumber(connectionId, toWireNumber);
-        viewModel.UpdateConnectionWireNumber(connectionId, toWireNumber);
+        var point = session.PlaceDefinitionPoint(pageId, x, y, wireNumber, color, crossSectionMm2, connectionId);
+        _definitionPointId = point.Id;
+        viewModel.AddDefinitionPointToView(point.Id, point.X, point.Y, point.WireNumber, point.Color, point.CrossSectionMm2, point.ConnectionId);
     }
 
     public void Undo()
     {
-        session.RenameWireNumber(connectionId, fromWireNumber);
-        viewModel.UpdateConnectionWireNumber(connectionId, fromWireNumber);
+        session.DeleteDefinitionPoint(_definitionPointId);
+        viewModel.RemoveDefinitionPointFromView(_definitionPointId);
+    }
+}
+
+/// <summary>
+/// Moves an existing definition point between two known world positions, optionally also changing
+/// which connection (if any) it's attached to — one drag can do both at once (drop it on a different
+/// wire, or into empty space). Mirrors MoveCommand's plain before/after shape, just two fields wider.
+/// </summary>
+internal sealed class MoveDefinitionPointCommand(ProjectSession session, SchematicPageViewModel viewModel, long definitionPointId,
+    double fromX, double fromY, long? fromConnectionId, double toX, double toY, long? toConnectionId) : IUndoableCommand
+{
+    public void Do() => Apply(toX, toY, fromConnectionId, toConnectionId);
+    public void Undo() => Apply(fromX, fromY, toConnectionId, fromConnectionId);
+
+    private void Apply(double x, double y, long? currentConnectionId, long? nextConnectionId)
+    {
+        session.MoveDefinitionPoint(definitionPointId, x, y);
+        if (currentConnectionId != nextConnectionId)
+        {
+            if (currentConnectionId is not null) session.DetachDefinitionPoint(definitionPointId);
+            if (nextConnectionId is { } id) session.AttachDefinitionPointToConnection(definitionPointId, id);
+        }
+        viewModel.UpdateDefinitionPointPosition(definitionPointId, x, y, nextConnectionId);
+    }
+}
+
+/// <summary>Edits a definition point's wire number/color/cross-section between two known states — one
+/// command shape for both "placing data on a fresh point" and "editing an existing one" (matching
+/// MoveCommand/RotateCommand's single before/after pair). Does not touch position or attachment — see
+/// MoveDefinitionPointCommand for that.</summary>
+internal sealed class SetDefinitionPointDataCommand(ProjectSession session, SchematicPageViewModel viewModel, long definitionPointId,
+    string? fromWireNumber, string? fromColor, double? fromCrossSectionMm2,
+    string? toWireNumber, string? toColor, double? toCrossSectionMm2) : IUndoableCommand
+{
+    public void Do() => Apply(toWireNumber, toColor, toCrossSectionMm2);
+    public void Undo() => Apply(fromWireNumber, fromColor, fromCrossSectionMm2);
+
+    private void Apply(string? wireNumber, string? color, double? crossSectionMm2)
+    {
+        session.SetDefinitionPointData(definitionPointId, wireNumber, color, crossSectionMm2);
+        viewModel.UpdateDefinitionPointData(definitionPointId, wireNumber, color, crossSectionMm2);
+    }
+}
+
+/// <summary>Rotates a definition point's tick between two known 90°-step states (R key) — purely
+/// cosmetic, same before/after-pair shape as RotateCommand.</summary>
+internal sealed class RotateDefinitionPointCommand(ProjectSession session, SchematicPageViewModel viewModel, long definitionPointId,
+    int fromRotationDegrees, int toRotationDegrees) : IUndoableCommand
+{
+    public void Do() => Apply(toRotationDegrees);
+    public void Undo() => Apply(fromRotationDegrees);
+
+    private void Apply(int rotationDegrees)
+    {
+        session.RotateDefinitionPoint(definitionPointId, rotationDegrees);
+        viewModel.UpdateDefinitionPointRotation(definitionPointId, rotationDegrees);
+    }
+}
+
+/// <summary>
+/// Deletes a definition point — the only way one is ever removed (dragging its tick around, or
+/// detaching it from a wire, never destroys it; see DECISIONS.md). Undo recreates it (new row Id)
+/// rather than restoring the original, the same recreate-not-restore shape as DeleteCommand.
+/// </summary>
+internal sealed class DeleteDefinitionPointCommand : IUndoableCommand
+{
+    private readonly ProjectSession _session;
+    private readonly SchematicPageViewModel _viewModel;
+    private readonly long _pageId;
+    private readonly double _x;
+    private readonly double _y;
+    private readonly string? _wireNumber;
+    private readonly string? _color;
+    private readonly double? _crossSectionMm2;
+    private readonly long? _connectionId;
+    private readonly int _rotationDegrees;
+    private long _definitionPointId;
+
+    public DeleteDefinitionPointCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId, DefinitionPointViewItem snapshot)
+    {
+        _session = session;
+        _viewModel = viewModel;
+        _pageId = pageId;
+        _definitionPointId = snapshot.Id;
+        _x = snapshot.X;
+        _y = snapshot.Y;
+        _wireNumber = snapshot.WireNumber;
+        _color = snapshot.Color;
+        _crossSectionMm2 = snapshot.CrossSectionMm2;
+        _connectionId = snapshot.ConnectionId;
+        _rotationDegrees = snapshot.RotationDegrees;
+    }
+
+    public void Do()
+    {
+        _session.DeleteDefinitionPoint(_definitionPointId);
+        _viewModel.RemoveDefinitionPointFromView(_definitionPointId);
+    }
+
+    public void Undo()
+    {
+        var point = _session.PlaceDefinitionPoint(_pageId, _x, _y, _wireNumber, _color, _crossSectionMm2, _connectionId);
+        _definitionPointId = point.Id;
+        if (_rotationDegrees != 0) _session.RotateDefinitionPoint(point.Id, _rotationDegrees);
+        _viewModel.AddDefinitionPointToView(point.Id, point.X, point.Y, point.WireNumber, point.Color, point.CrossSectionMm2, point.ConnectionId, _rotationDegrees);
     }
 }
 
 /// <summary>Reassigns every wire number in the project sequentially (Section 6.1: "renumber command
-/// available"). Undo restores each connection's previous number via ProjectSession.ApplyWireNumbers.</summary>
+/// available"). Undo restores each definition point's previous number via ProjectSession.ApplyWireNumbers.</summary>
 internal sealed class RenumberWiresCommand(ProjectSession session, SchematicPageViewModel viewModel) : IUndoableCommand
 {
-    private IReadOnlyList<(long ConnectionId, string? OldWireNumber, string NewWireNumber)> _result = [];
+    private IReadOnlyList<(long DefinitionPointId, string? OldWireNumber, string NewWireNumber)> _result = [];
 
     public void Do()
     {
         _result = session.RenumberAllWires();
         viewModel.ReloadConnectionsFromSession();
+        viewModel.ReloadDefinitionPointsFromSession();
     }
 
     public void Undo()
     {
-        session.ApplyWireNumbers(_result.Select(r => (r.ConnectionId, r.OldWireNumber)).ToList());
+        session.ApplyWireNumbers(_result.Select(r => (r.DefinitionPointId, r.OldWireNumber)).ToList());
         viewModel.ReloadConnectionsFromSession();
+        viewModel.ReloadDefinitionPointsFromSession();
+    }
+}
+
+/// <summary>Draws a new cable definition line. Undo deletes it, clearing any mirrored Connection.CableId/
+/// CableCoreId assignments it made — same recreate-not-restore shape as PlaceDefinitionPointCommand.</summary>
+internal sealed class DrawCableLineCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId,
+    double x1, double y1, double x2, double y2, string cableTag, IReadOnlyList<long> crossedConnectionIds) : IUndoableCommand
+{
+    private long _cableLineId;
+
+    public void Do()
+    {
+        var result = session.DrawCableLine(pageId, x1, y1, x2, y2, cableTag, crossedConnectionIds);
+        _cableLineId = result.CableLineId;
+        var line = session.GetCableLine(_cableLineId)!;
+        var tag = session.GetCable(line.CableId)?.Tag ?? cableTag;
+        viewModel.AddCableLineToView(line.Id, line.X1, line.Y1, line.X2, line.Y2, line.CableId, tag);
+    }
+
+    public void Undo()
+    {
+        session.DeleteCableLine(_cableLineId);
+        viewModel.RemoveCableLineFromView(_cableLineId);
+    }
+}
+
+/// <summary>
+/// Moves an existing cable line between two known endpoint pairs, re-detecting crossings (same cable) at
+/// each position — a newly-reached wire picks up a fresh core, matching MoveCableLine's own semantics.
+/// Undo only reverts position/re-detection, not any core assignments a since-undone drag newly made
+/// (same accepted limitation as the rest of this feature — detection is explicit, not perfectly
+/// bidirectional; see DECISIONS.md).
+/// </summary>
+internal sealed class MoveCableLineCommand(ProjectSession session, SchematicPageViewModel viewModel, long cableLineId,
+    double fromX1, double fromY1, double fromX2, double fromY2, IReadOnlyList<long> fromCrossedConnectionIds,
+    double toX1, double toY1, double toX2, double toY2, IReadOnlyList<long> toCrossedConnectionIds,
+    string cableTag) : IUndoableCommand
+{
+    public void Do() => Apply(toX1, toY1, toX2, toY2, toCrossedConnectionIds);
+    public void Undo() => Apply(fromX1, fromY1, fromX2, fromY2, fromCrossedConnectionIds);
+
+    private void Apply(double x1, double y1, double x2, double y2, IReadOnlyList<long> crossedConnectionIds)
+    {
+        session.MoveCableLine(cableLineId, x1, y1, x2, y2, cableTag, crossedConnectionIds);
+        viewModel.UpdateCableLineGeometry(cableLineId, x1, y1, x2, y2);
+    }
+}
+
+/// <summary>
+/// Re-homes a cable line to a different cable (double-click, edited Cable Tag) — every currently-live
+/// crossing is cleared from the old cable and reassigned fresh cores under the found-or-created new one.
+/// </summary>
+internal sealed class ReassignCableLineCommand(ProjectSession session, SchematicPageViewModel viewModel, long cableLineId,
+    string fromCableTag, string toCableTag, IReadOnlyList<long> crossedConnectionIds) : IUndoableCommand
+{
+    public void Do() => Apply(toCableTag);
+    public void Undo() => Apply(fromCableTag);
+
+    private void Apply(string cableTag)
+    {
+        session.ReassignCableLine(cableLineId, cableTag, crossedConnectionIds);
+        var line = session.GetCableLine(cableLineId)!;
+        var tag = session.GetCable(line.CableId)?.Tag ?? cableTag;
+        viewModel.UpdateCableLineCable(cableLineId, line.CableId, tag);
+    }
+}
+
+/// <summary>
+/// Deletes a cable line — clears every live crossing's mirrored Connection.CableId/CableCoreId first
+/// (ProjectSession.DeleteCableLine). Undo recreates it (new row Id, crossings re-detected fresh at the
+/// same geometry) rather than restoring the original, same recreate-not-restore shape as
+/// DeleteDefinitionPointCommand.
+/// </summary>
+internal sealed class DeleteCableLineCommand : IUndoableCommand
+{
+    private readonly ProjectSession _session;
+    private readonly SchematicPageViewModel _viewModel;
+    private readonly long _pageId;
+    private readonly double _x1;
+    private readonly double _y1;
+    private readonly double _x2;
+    private readonly double _y2;
+    private readonly string _cableTag;
+    private long _cableLineId;
+
+    public DeleteCableLineCommand(ProjectSession session, SchematicPageViewModel viewModel, long pageId, CableLineViewItem snapshot)
+    {
+        _session = session;
+        _viewModel = viewModel;
+        _pageId = pageId;
+        _cableLineId = snapshot.Id;
+        _x1 = snapshot.X1;
+        _y1 = snapshot.Y1;
+        _x2 = snapshot.X2;
+        _y2 = snapshot.Y2;
+        _cableTag = snapshot.CableTag;
+    }
+
+    public void Do()
+    {
+        _session.DeleteCableLine(_cableLineId);
+        _viewModel.RemoveCableLineFromView(_cableLineId);
+    }
+
+    public void Undo()
+    {
+        var crossedConnectionIds = _viewModel.DetectCableLineCrossings(_x1, _y1, _x2, _y2);
+        var result = _session.DrawCableLine(_pageId, _x1, _y1, _x2, _y2, _cableTag, crossedConnectionIds);
+        _cableLineId = result.CableLineId;
+        var line = _session.GetCableLine(_cableLineId)!;
+        var tag = _session.GetCable(line.CableId)?.Tag ?? _cableTag;
+        _viewModel.AddCableLineToView(line.Id, line.X1, line.Y1, line.X2, line.Y2, line.CableId, tag);
+    }
+}
+
+/// <summary>Rotates a cable line crossing's tick between two known 90°-step states (R key) — purely
+/// cosmetic, same shape as RotateDefinitionPointCommand.</summary>
+internal sealed class RotateCableLineCrossingCommand(ProjectSession session, SchematicPageViewModel viewModel, long crossingId,
+    int fromRotationDegrees, int toRotationDegrees) : IUndoableCommand
+{
+    public void Do() => Apply(toRotationDegrees);
+    public void Undo() => Apply(fromRotationDegrees);
+
+    private void Apply(int rotationDegrees)
+    {
+        session.RotateCableLineCrossing(crossingId, rotationDegrees);
+        viewModel.UpdateCableLineCrossingRotation(crossingId, rotationDegrees);
+    }
+}
+
+/// <summary>Edits a single cable line crossing's own core number/color/cross-section between two known
+/// states — same before/after-pair shape as SetDefinitionPointDataCommand, just sourced from a
+/// CableCore instead of a Connection.</summary>
+internal sealed class SetCableLineCrossingCoreCommand(ProjectSession session, SchematicPageViewModel viewModel, long crossingId,
+    int fromCoreNumber, string? fromColor, double? fromCrossSectionMm2,
+    int toCoreNumber, string? toColor, double? toCrossSectionMm2) : IUndoableCommand
+{
+    public void Do() => Apply(toCoreNumber, toColor, toCrossSectionMm2);
+    public void Undo() => Apply(fromCoreNumber, fromColor, fromCrossSectionMm2);
+
+    private void Apply(int coreNumber, string? color, double? crossSectionMm2)
+    {
+        session.SetCableLineCrossingCore(crossingId, coreNumber, color, crossSectionMm2);
+        viewModel.UpdateCableLineCrossingCore(crossingId, coreNumber, color, crossSectionMm2);
+    }
+}
+
+/// <summary>Wraps several commands so a multi-select group action (move-together, delete-together)
+/// undoes/redoes as one atomic step on the UndoRedoStack. Undo runs in reverse order in case any
+/// wrapped command depends on state set up by an earlier one (e.g. DeleteCommand's device-recreation).</summary>
+internal sealed class CompositeCommand(IReadOnlyList<IUndoableCommand> commands) : IUndoableCommand
+{
+    public void Do()
+    {
+        foreach (var command in commands) command.Do();
+    }
+
+    public void Undo()
+    {
+        for (var i = commands.Count - 1; i >= 0; i--) commands[i].Undo();
     }
 }
