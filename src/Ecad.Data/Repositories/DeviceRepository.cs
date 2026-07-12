@@ -53,6 +53,25 @@ public class DeviceRepository(SqliteConnection connection)
             new { deviceId, function, location, deviceTag });
     }
 
+    /// <summary>M8: finally writes to Device.PartId, unused since M1 (Section 6.2's Devices grid).</summary>
+    public void UpdateDevicePart(long deviceId, long? partId)
+    {
+        connection.Execute("UPDATE Device SET PartId = @partId WHERE Id = @deviceId;", new { deviceId, partId });
+    }
+
+    public void UpdateDevicePin(DevicePin pin)
+    {
+        connection.Execute(
+            "UPDATE DevicePin SET Name = @Name, Function = @Function, TechnicalData = @TechnicalData WHERE Id = @Id;",
+            pin);
+    }
+
+    /// <summary>Caller must ensure no Connection references this pin first — see ProjectSession.CanDeleteDevicePin.</summary>
+    public void DeleteDevicePin(long devicePinId)
+    {
+        connection.Execute("DELETE FROM DevicePin WHERE Id = @devicePinId;", new { devicePinId });
+    }
+
     public IReadOnlyList<Device> GetAllDevices(long projectId)
     {
         return connection.Query<Device>("SELECT * FROM Device WHERE ProjectId = @projectId ORDER BY Id;", new { projectId }).ToList();

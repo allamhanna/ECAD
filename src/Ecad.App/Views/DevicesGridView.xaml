@@ -1,0 +1,28 @@
+<UserControl x:Class="Ecad.App.Views.DevicesGridView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DockPanel Margin="8">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Devices are created by placing a symbol on a schematic page — this grid edits data that already exists." VerticalAlignment="Center" Foreground="Gray" Margin="0,0,16,0"/>
+            <Button Content="Delete Selected" Command="{Binding DeleteSelectedCommand}" Padding="8,2"/>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Bulk-assign Part to selected:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <ComboBox ItemsSource="{Binding AllParts}" SelectedItem="{Binding BulkAssignPart}"
+                      DisplayMemberPath="ExternalKey" Width="200" VerticalAlignment="Center"/>
+            <Button Content="Apply" Command="{Binding ApplyBulkAssignPartCommand}" Margin="8,0,0,0" Padding="8,2"/>
+        </StackPanel>
+
+        <DataGrid x:Name="Grid" ItemsSource="{Binding Devices}" AutoGenerateColumns="False" CanUserAddRows="False"
+                  SelectionMode="Extended" SelectionUnit="FullRow"
+                  SelectionChanged="OnSelectionChanged" RowEditEnding="OnRowEditEnding">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Function" Binding="{Binding FunctionSegment}" Width="80"/>
+                <DataGridTextColumn Header="Location" Binding="{Binding LocationSegment}" Width="80"/>
+                <DataGridTextColumn Header="Tag" Binding="{Binding DeviceTagSegment}" Width="100"/>
+                <DataGridTextColumn Header="Part" Binding="{Binding PartExternalKey}" Width="220" IsReadOnly="True"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

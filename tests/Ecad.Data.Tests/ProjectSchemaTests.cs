@@ -140,7 +140,7 @@ public class ProjectSchemaTests
         var fromPin = devices.InsertDevicePin(new DevicePin { DeviceId = deviceId, Name = "U" });
         var toPin = devices.InsertDevicePin(new DevicePin { DeviceId = deviceId, Name = "1" });
 
-        var cableId = cables.InsertCable(new Cable { Tag = "-W12", EndTypeClassification = "FER-FER" });
+        var cableId = cables.InsertCable(new Cable { ProjectId = projectId, Tag = "-W12", EndTypeClassification = "FER-FER" });
         var coreId = cables.InsertCableCore(new CableCore { CableId = cableId, CoreNumber = 1, Color = "BN", CrossSectionMm2 = 1.0 });
 
         var connectionId = connections.InsertConnection(new Connection

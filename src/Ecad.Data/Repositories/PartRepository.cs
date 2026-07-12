@@ -37,6 +37,11 @@ public class PartRepository(SqliteConnection connection)
         return connection.Query<Organization>("SELECT * FROM Organization ORDER BY Name;").ToList();
     }
 
+    public Organization? GetOrganization(long id)
+    {
+        return connection.QuerySingleOrDefault<Organization>("SELECT * FROM Organization WHERE Id = @id;", new { id });
+    }
+
     public Part? GetPart(long id)
     {
         return connection.QuerySingleOrDefault<PartRow>("SELECT * FROM Part WHERE Id = @id;", new { id })?.ToModel();

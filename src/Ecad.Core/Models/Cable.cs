@@ -3,6 +3,7 @@ namespace Ecad.Core.Models;
 public class Cable
 {
     public long Id { get; set; }
+    public long ProjectId { get; set; }
     public string Tag { get; set; } = string.Empty;
     public long? PartId { get; set; }
     public string? TypeDesignation { get; set; }

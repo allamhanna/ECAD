@@ -1,0 +1,61 @@
+<UserControl x:Class="Ecad.App.Views.ConnectionsGridView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:Ecad.App.Converters">
+    <UserControl.Resources>
+        <converters:CableCoreOptionsConverter x:Key="CableCoreOptionsConverter"/>
+    </UserControl.Resources>
+    <DockPanel Margin="8">
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Connections are created and removed only on a schematic page (drawing, auto-connecting, or moving symbols apart) — this grid edits data that already exists." VerticalAlignment="Center" Foreground="Gray"/>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <TextBlock Text="Bulk-set color:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <TextBox Text="{Binding BulkColor, UpdateSourceTrigger=PropertyChanged}" Width="60" VerticalAlignment="Center"/>
+            <Button Content="Apply" Command="{Binding BulkSetColorCommand}" Margin="4,0,16,0" Padding="8,2"/>
+
+            <TextBlock Text="Bulk-set cross-section (mm²):" VerticalAlignment="Center" Margin="0,0,4,0"/>
+            <TextBox Text="{Binding BulkCrossSectionMm2, UpdateSourceTrigger=PropertyChanged}" Width="60" VerticalAlignment="Center"/>
+            <Button Content="Apply" Command="{Binding BulkSetCrossSectionCommand}" Margin="4,0,0,0" Padding="8,2"/>
+        </StackPanel>
+
+        <DataGrid x:Name="Grid" ItemsSource="{Binding Connections}" AutoGenerateColumns="False" CanUserAddRows="False"
+                  SelectionMode="Extended" SelectionUnit="FullRow"
+                  SelectionChanged="OnSelectionChanged" RowEditEnding="OnRowEditEnding">
+            <DataGrid.Columns>
+                <DataGridComboBoxColumn Header="From Pin" Width="180"
+                                         SelectedValueBinding="{Binding FromDevicePinId}"
+                                         SelectedValuePath="PinId" DisplayMemberPath="Label"
+                                         ItemsSource="{Binding DataContext.AllDevicePins, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                <DataGridComboBoxColumn Header="To Pin" Width="180"
+                                         SelectedValueBinding="{Binding ToDevicePinId}"
+                                         SelectedValuePath="PinId" DisplayMemberPath="Label"
+                                         ItemsSource="{Binding DataContext.AllDevicePins, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                <DataGridTextColumn Header="Wire #" Binding="{Binding WireNumber}" Width="60" IsReadOnly="True"/>
+                <DataGridTextColumn Header="Color" Binding="{Binding Color}" Width="60"/>
+                <DataGridTextColumn Header="Cross-section (mm²)" Binding="{Binding CrossSectionMm2}" Width="120"/>
+                <DataGridTextColumn Header="Length (mm)" Binding="{Binding LengthMm}" Width="90"/>
+                <DataGridComboBoxColumn Header="Cable" Width="140"
+                                         SelectedValueBinding="{Binding CableId}"
+                                         SelectedValuePath="Id" DisplayMemberPath="Tag"
+                                         ItemsSource="{Binding DataContext.AllCables, RelativeSource={RelativeSource AncestorType=DataGrid}}"/>
+                <DataGridTemplateColumn Header="Cable Core" Width="100">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <ComboBox SelectedValue="{Binding CableCoreId, UpdateSourceTrigger=PropertyChanged}"
+                                      SelectedValuePath="Id" DisplayMemberPath="CoreNumber">
+                                <ComboBox.ItemsSource>
+                                    <MultiBinding Converter="{StaticResource CableCoreOptionsConverter}">
+                                        <Binding Path="CableId"/>
+                                        <Binding Path="DataContext.CoresByCableId" RelativeSource="{RelativeSource AncestorType=DataGrid}"/>
+                                    </MultiBinding>
+                                </ComboBox.ItemsSource>
+                            </ComboBox>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

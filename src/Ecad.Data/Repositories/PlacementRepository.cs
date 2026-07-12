@@ -143,6 +143,13 @@ public class PlacementRepository(SqliteConnection connection)
         return connection.ExecuteScalar<int>("SELECT COUNT(*) FROM Placement WHERE DeviceId = @deviceId;", new { deviceId });
     }
 
+    /// <summary>ADR-015: every Placement of this Device across every page — used to cascade-delete
+    /// a Device (and every symbol it's drawn as) from the Devices grid in one action.</summary>
+    public IReadOnlyList<long> GetPlacementIdsForDevice(long deviceId)
+    {
+        return connection.Query<long>("SELECT Id FROM Placement WHERE DeviceId = @deviceId;", new { deviceId }).ToList();
+    }
+
     /// <summary>
     /// Deletes the DevicePins this placement exposes that no other placement also exposes — the
     /// pins "exclusive" to this placement (e.g. a contact block's 13/14, not shared with the coil's

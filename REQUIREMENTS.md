@@ -47,6 +47,11 @@ Primary reference user: an electrical engineer at a robotics company documenting
 - Crash-safe autosave & project file integrity (backup/restore)
 - Documentation, onboarding samples
 - Multi-user considerations deferred until demand proven
+- **UI/visual design pass** (decided 2026-07-09): every window so far (M2–M8) uses default WPF
+  controls/spacing with no dedicated visual design — deliberately deferred rather than styled
+  incrementally, since Phase 1's remaining milestones (M9–M12) still add new windows/grids that
+  would need re-styling each time. Belongs here, alongside the installer/onboarding work that's
+  already about presenting the app to real users, not before the functional set stops changing shape.
 
 ## 4. Technology Stack
 
@@ -134,9 +139,17 @@ All entities live in one SQLite database per project. A separate SQLite database
 - Cable definition line: draw across connections to assign them to a cable; core assignment dialog
 
 ### 6.2 Grid-based editing (parallel path to the canvas)
-- Devices grid: create/edit devices and pins without drawing
-- Connections grid: create/edit connections (from-pin, to-pin, properties, terminations) without drawing → connections created here can later be represented graphically or remain data-only
-- Cables grid: manage cables, core assignments
+> **Decision recorded (2026-07-09, see `DECISIONS.md` ADR-011):** for now, Devices and Connections
+> are graphics-first — a Device or Connection is only *created* by drawing/auto-connecting on the
+> schematic canvas (mimicking EPLAN's workflow), never conjured directly in a grid. The grids below
+> edit and bulk-edit that data once it exists; they do not create it. This may reverse later (grid-first
+> creation, canvas generated from it) once more of the workflow is in place, but is explicitly out of
+> scope until then. Cables are the one exception today, since no canvas-side mechanism exists yet to
+> create one (the cable-definition-line feature below is still unbuilt) — Cables stay creatable from
+> the grid until that changes.
+- Devices grid: edit devices and pins without drawing (creation happens by placing a symbol on a page)
+- Connections grid: edit connections (from-pin, to-pin, properties, terminations) without drawing (creation happens by drawing/auto-connecting on a page) → connections created here can later be represented graphically or remain data-only
+- Cables grid: create/manage cables, core assignments (no canvas-side cable creation exists yet)
 - Bulk editing: multi-row property assignment (e.g., assign ferrule part to all selected connection ends filtered by cross-section)
 
 ### 6.3 Termination handling
