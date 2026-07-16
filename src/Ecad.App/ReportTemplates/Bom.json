@@ -1,0 +1,27 @@
+{
+    "ReportKind": "Bom",
+    "Variant": null,
+    "Page": { "PaperSize": "A4", "Orientation": "Portrait", "MarginLeftMm": 15, "MarginTopMm": 15, "MarginRightMm": 15, "MarginBottomMm": 15 },
+    "Header": {
+        "HeightMm": 12,
+        "Content": [
+            { "kind": "StaticText", "Text": "Bill of Materials", "FontStyle": "Bold", "FontSizePt": 14 }
+        ]
+    },
+    "Footer": null,
+    "Body": [
+        {
+            "kind": "Table",
+            "DataSourceKey": "BomLines",
+            "Columns": [
+                { "Header": "Module", "DataFieldKey": "Module", "WidthMm": 25, "Align": "Left" },
+                { "Header": "Article", "DataFieldKey": "ExternalKey", "WidthMm": 30, "Align": "Left" },
+                { "Header": "Type", "DataFieldKey": "TypeNumber", "WidthMm": 35, "Align": "Left" },
+                { "Header": "Description", "DataFieldKey": "Description", "WidthMm": 55, "Align": "Left" },
+                { "Header": "Location", "DataFieldKey": "Location", "WidthMm": 20, "Align": "Left" },
+                { "Header": "Qty", "DataFieldKey": "Quantity", "WidthMm": 15, "Align": "Right" }
+            ]
+        }
+    ],
+    "PageBreak": { "MaxRowsPerPage": null, "OneEntityPerPage": false }
+}

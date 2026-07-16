@@ -39,6 +39,19 @@ public class DeviceRepository(SqliteConnection connection)
         return connection.Query<DevicePin>("SELECT * FROM DevicePin WHERE DeviceId = @deviceId;", new { deviceId }).ToList();
     }
 
+    /// <summary>M12: every DevicePin in the project in one query — report Builders resolve an arbitrary
+    /// Connection.From/ToDevicePinId back to its owning Device without one query per connection.</summary>
+    public IReadOnlyList<DevicePin> GetAllDevicePins(long projectId)
+    {
+        return connection.Query<DevicePin>(
+            """
+            SELECT dp.* FROM DevicePin dp
+            JOIN Device d ON d.Id = dp.DeviceId
+            WHERE d.ProjectId = @projectId;
+            """,
+            new { projectId }).ToList();
+    }
+
     /// <summary>Deletes the Device row; DevicePin/Placement/PlacementPin all cascade per the M1 schema.
     /// Callers (ProjectSession.DeletePlacement, M6) only call this once a Device has no Placements left.</summary>
     public void DeleteDevice(long deviceId)

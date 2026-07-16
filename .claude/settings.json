@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet *)",
+      "Bash(git *)",
+      "PowerShell(Get-Process*)",
+      "PowerShell(Stop-Process*)",
+      "PowerShell(Start-Process*)",
+      "PowerShell(Start-Sleep*)",
+      "PowerShell(Test-Path*)",
+      "PowerShell(Get-ChildItem*)"
+    ]
+  }
+}

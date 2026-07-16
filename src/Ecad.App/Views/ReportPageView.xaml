@@ -1,0 +1,25 @@
+<UserControl x:Class="Ecad.App.Views.ReportPageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <DockPanel>
+        <StackPanel DockPanel.Dock="Top" Margin="8">
+            <StackPanel Orientation="Horizontal">
+                <Button Content="Regenerate" Command="{Binding RegenerateCommand}" Padding="8,2" Margin="0,0,8,0"/>
+                <TextBlock Text="{Binding Title}" FontWeight="Bold" FontSize="16" VerticalAlignment="Center"/>
+            </StackPanel>
+            <TextBlock Text="{Binding WarningText}" Foreground="DarkOrange" Margin="0,4,0,0"/>
+            <ItemsControl ItemsSource="{Binding HeaderFields}" Margin="0,8,0,0">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,2">
+                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" Width="120"/>
+                            <TextBlock Text="{Binding Value}"/>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+        <DataGrid x:Name="ReportGrid" ItemsSource="{Binding Rows}" AutoGenerateColumns="False"
+                  IsReadOnly="True" CanUserAddRows="False" Margin="8"/>
+    </DockPanel>
+</UserControl>

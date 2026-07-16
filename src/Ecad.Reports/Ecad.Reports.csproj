@@ -4,10 +4,6 @@
     <ProjectReference Include="..\Ecad.Core\Ecad.Core.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="QuestPDF" Version="2026.6.1" />
-  </ItemGroup>
-
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

@@ -22,6 +22,7 @@ public sealed class ProjectSession : IDisposable
     private readonly CableRepository _cables;
     private readonly CableLineRepository _cableLines;
     private readonly PartRepository _parts;
+    private readonly GeneratedReportRepository _generatedReports;
     private readonly List<Page> _pages;
 
     private ProjectSession(string filePath, SqliteConnection connection, Project project, List<Page> pages)
@@ -36,6 +37,7 @@ public sealed class ProjectSession : IDisposable
         _cables = new CableRepository(connection);
         _cableLines = new CableLineRepository(connection);
         _parts = new PartRepository(connection);
+        _generatedReports = new GeneratedReportRepository(connection);
         CurrentProject = project;
         _pages = pages;
     }
@@ -72,6 +74,11 @@ public sealed class ProjectSession : IDisposable
     /// same cross-window live-sync pattern as the other *Changed events.</summary>
     public event Action? CableLinesChanged;
 
+    /// <summary>Raised after a Page is added, updated, or deleted — M12: a generated report page
+    /// appearing/disappearing (or being reused on regeneration) needs to reach MainViewModel's Pages
+    /// list and any open tab, same cross-window live-sync pattern as the other *Changed events.</summary>
+    public event Action? PagesChanged;
+
     /// <summary>Creates a new .ecad file at the given path and inserts the given Project as its single Project row.</summary>
     public static ProjectSession Create(string filePath, Project project)
     {
@@ -98,6 +105,70 @@ public sealed class ProjectSession : IDisposable
             connection.Dispose();
             throw;
         }
+    }
+
+    /// <summary>Edits a page's own segments/type in place (the Pages sidebar's "Rename" action) — a
+    /// single-page-only operation, matching Rotate's existing single-select-only scoping, since a
+    /// Page's identity fields (especially PageNumberSegment) are inherently per-page data, not something
+    /// several pages should be bulk-set to the same value.</summary>
+    public void RenamePage(long pageId, string? function, string? location, string? documentType, string pageNumber, PageType pageType)
+    {
+        var page = _pages.Single(p => p.Id == pageId);
+        page.FunctionSegment = function;
+        page.LocationSegment = location;
+        page.DocumentTypeSegment = documentType;
+        page.PageNumberSegment = pageNumber;
+        page.PageType = pageType;
+        _projects.UpdatePage(page);
+        PagesChanged?.Invoke();
+    }
+
+    /// <summary>Auto-sequences PageNumberSegment as 1, 2, 3... across exactly the given pages, in the
+    /// order given (the Pages sidebar's "Renumber" action) — same auto-sequential convention as
+    /// RenumberAllWires, just scoped to a specific selection instead of the whole project.</summary>
+    public void RenumberPages(IReadOnlyList<long> pageIdsInOrder)
+    {
+        var number = 1;
+        foreach (var pageId in pageIdsInOrder)
+        {
+            var page = _pages.Single(p => p.Id == pageId);
+            page.PageNumberSegment = number.ToString();
+            _projects.UpdatePage(page);
+            number++;
+        }
+        PagesChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Deletes one or more pages entirely, along with everything drawn on them: every Placement (and,
+    /// via the same DeletePlacementCore path DeleteDeviceCascade already uses, each Placement's Device if
+    /// this was its last one, plus any dependent Connections), while DefinitionPoint/CableLine/
+    /// CableLineCrossing/GeneratedReport rows cascade at the SQL level (all ON DELETE CASCADE from
+    /// PageId). Reuses DeletePlacementCore rather than a raw cascading DELETE FROM Page so a Device that
+    /// loses its last Placement here is cleaned up exactly the same way DeleteDeviceCascade already
+    /// handles it — a plain SQL cascade would silently orphan that Device instead.
+    /// </summary>
+    public void DeletePagesCascade(IReadOnlyList<long> pageIds)
+    {
+        var anyConnectionsDeleted = false;
+        foreach (var pageId in pageIds)
+        {
+            var placementIds = _placements.GetPlacementsForPage(pageId).Select(p => p.PlacementId).ToList();
+            foreach (var placementId in placementIds)
+            {
+                var (_, connectionsDeletedForThisPlacement) = DeletePlacementCore(placementId);
+                anyConnectionsDeleted |= connectionsDeletedForThisPlacement;
+            }
+
+            _projects.DeletePage(pageId);
+            _pages.RemoveAll(p => p.Id == pageId);
+        }
+
+        PlacementsChanged?.Invoke();
+        if (anyConnectionsDeleted) ConnectionsChanged?.Invoke();
+        DefinitionPointsChanged?.Invoke();
+        CableLinesChanged?.Invoke();
+        PagesChanged?.Invoke();
     }
 
     public Page AddPage(Page page)
@@ -248,6 +319,10 @@ public sealed class ProjectSession : IDisposable
     /// <summary>Looks up a Part already cached in this project's own database (see EnsurePartCached) —
     /// used to display, e.g., the ExternalKey of a Device's assigned Part without needing the Library DB.</summary>
     public Part? GetCachedPart(long partId) => _parts.GetPart(partId);
+
+    /// <summary>M12: every Part cached in this project's own database — report Builders (BOM,
+    /// connection list) need the whole set at once rather than one lookup per reference.</summary>
+    public IReadOnlyList<Part> GetAllParts() => _parts.GetAllParts();
 
     public long AddDevicePin(long deviceId, string name, string? function, string? technicalData)
     {
@@ -636,6 +711,10 @@ public sealed class ProjectSession : IDisposable
 
     public IReadOnlyList<DevicePin> GetDevicePins(long deviceId) => _devices.GetDevicePins(deviceId);
 
+    /// <summary>M12: every DevicePin in the project — report Builders resolve an arbitrary Connection's
+    /// From/ToDevicePinId back to its owning Device without one query per connection.</summary>
+    public IReadOnlyList<DevicePin> GetAllDevicePins() => _devices.GetAllDevicePins(CurrentProject.Id);
+
     public IReadOnlyList<PlacementPinInfo> GetPlacementPins(long placementId) => _placements.GetPlacementPins(placementId);
 
     public IReadOnlyList<Device> GetAllDevices() => _devices.GetAllDevices(CurrentProject.Id);
@@ -668,14 +747,24 @@ public sealed class ProjectSession : IDisposable
 
     /// <summary>Rejects (rather than auto-clearing) deleting a Cable still referenced by a Connection —
     /// losing a whole cable's identity silently would be a big, surprising loss. Contrast DeleteCableCore,
-    /// which auto-clears instead of blocking, since a single core is a much smaller, easily-re-picked field.</summary>
+    /// which auto-clears instead of blocking, since a single core is a much smaller, easily-re-picked field.
+    /// M12: also removes this cable's manufacturing-sheet report page, if one was ever generated — a
+    /// report for a cable that no longer exists would otherwise linger, showing stale/orphaned data.</summary>
     public void DeleteCable(long cableId)
     {
         if (!CanDeleteCable(cableId))
             throw new InvalidOperationException($"Cable {cableId} is still referenced by a Connection.");
 
+        var report = _generatedReports.GetByIdentity(ReportKinds.CableManufacturingSheet, cableId, null);
+        if (report is not null)
+        {
+            _projects.DeletePage(report.PageId);
+            _pages.RemoveAll(p => p.Id == report.PageId);
+        }
+
         _cables.DeleteCable(cableId);
         CablesChanged?.Invoke();
+        if (report is not null) PagesChanged?.Invoke();
     }
 
     public IReadOnlyList<CableCore> GetCableCores(long cableId) => _cables.GetCableCores(cableId);
@@ -844,6 +933,92 @@ public sealed class ProjectSession : IDisposable
             if (match.Success && int.Parse(match.Value) > maxNumber) maxNumber = int.Parse(match.Value);
         }
         return $"-W{maxNumber + 1}";
+    }
+
+    /// <summary>What a report generation/regeneration call actually did — whether the Page was newly
+    /// created or an existing one was reused (regenerated in place). Ecad.Reports.LayoutSchema owns the
+    /// authoritative ReportKind string constants; these plain-string duplicates exist because Ecad.Data
+    /// must not reference Ecad.Reports (STRUCTURE.md's dependency direction) — keep both in sync by hand.</summary>
+    public sealed record ReportPageResult(Page Page, bool WasNewlyCreated);
+
+    private static class ReportKinds
+    {
+        public const string CableManufacturingSheet = "CableManufacturingSheet";
+    }
+
+    /// <summary>
+    /// Finds-or-creates the Page hosting a generated report, keyed by (reportKind, sourceEntityId,
+    /// groupingKey) — the same identity GeneratedReport's unique index enforces. An existing match is
+    /// reused in place (its GeneratedAtUtc bumped) so re-running a report never creates a duplicate page
+    /// or shifts numbering (Section 6.4: "updates existing generated pages without page-number
+    /// collisions"); a miss creates a new Page under documentTypeSegment with the next PageNumberSegment
+    /// within that segment. sourceEntityId is a Cable.Id for a manufacturing-sheet page, else null;
+    /// groupingKey discriminates BOM grouping mode, else null.
+    /// </summary>
+    public ReportPageResult UpsertGeneratedReportPage(string reportKind, string documentTypeSegment, long? sourceEntityId, string? groupingKey)
+    {
+        var existingReport = _generatedReports.GetByIdentity(reportKind, sourceEntityId, groupingKey);
+        if (existingReport is not null)
+        {
+            _generatedReports.UpdateGeneratedAt(existingReport.Id, DateTimeOffset.UtcNow);
+            var existingPage = _pages.Single(p => p.Id == existingReport.PageId);
+            PagesChanged?.Invoke();
+            return new ReportPageResult(existingPage, false);
+        }
+
+        var pageNumber = _pages.Count(p => p.DocumentTypeSegment == documentTypeSegment) + 1;
+        var page = AddPage(new Page
+        {
+            DocumentTypeSegment = documentTypeSegment,
+            PageNumberSegment = pageNumber.ToString(),
+            PageType = PageType.Report,
+            SortOrder = _projects.GetMaxSortOrder(CurrentProject.Id) + 1,
+        });
+
+        var report = new GeneratedReport
+        {
+            PageId = page.Id,
+            ReportKind = reportKind,
+            SourceEntityId = sourceEntityId,
+            GroupingKey = groupingKey,
+            GeneratedAtUtc = DateTimeOffset.UtcNow,
+        };
+        report.Id = _generatedReports.Insert(report);
+
+        PagesChanged?.Invoke();
+        return new ReportPageResult(page, true);
+    }
+
+    /// <summary>The GeneratedReport identity behind a Page, if it is a report page — a ReportPageViewModel
+    /// uses this on open/regenerate to know which report kind + source entity to re-render.</summary>
+    public GeneratedReport? GetGeneratedReportForPage(long pageId) => _generatedReports.GetByPageId(pageId);
+
+    /// <summary>Removes any manufacturing-sheet report page whose Cable no longer exists in
+    /// stillLiveCableIds — the batch "Generate All Manufacturing Sheets" action's orphan cleanup, for a
+    /// cable renamed/deleted since the last regeneration.</summary>
+    public void DeleteOrphanedCableManufacturingSheets(IReadOnlyList<long> stillLiveCableIds)
+    {
+        var liveIds = stillLiveCableIds.ToHashSet();
+        var anyDeleted = false;
+        foreach (var report in _generatedReports.GetAllForKind(CurrentProject.Id, ReportKinds.CableManufacturingSheet))
+        {
+            if (report.SourceEntityId is { } cableId && !liveIds.Contains(cableId))
+            {
+                _projects.DeletePage(report.PageId);
+                _pages.RemoveAll(p => p.Id == report.PageId);
+                anyDeleted = true;
+            }
+        }
+        if (anyDeleted) PagesChanged?.Invoke();
+    }
+
+    /// <summary>Deletes a Page outright — the first general-purpose page deletion in the codebase (M12).
+    /// GeneratedReport rows cascade with their Page.</summary>
+    public void DeletePage(long pageId)
+    {
+        _projects.DeletePage(pageId);
+        _pages.RemoveAll(p => p.Id == pageId);
+        PagesChanged?.Invoke();
     }
 
     private Cable FindOrCreateCableByTag(string cableTag)

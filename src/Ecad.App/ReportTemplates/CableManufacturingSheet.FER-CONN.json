@@ -1,0 +1,33 @@
+{
+    "ReportKind": "CableManufacturingSheet",
+    "Variant": "FER-CONN",
+    "Page": { "PaperSize": "A4", "Orientation": "Portrait", "MarginLeftMm": 15, "MarginTopMm": 15, "MarginRightMm": 15, "MarginBottomMm": 15 },
+    "Header": {
+        "HeightMm": 30,
+        "Content": [
+            { "kind": "StaticText", "Text": "Cable Manufacturing Sheet — Ferrule/Connector", "FontStyle": "Bold", "FontSizePt": 14 },
+            { "kind": "Field", "Label": "Cable", "DataFieldKey": "Cable.Tag", "WidthMm": null },
+            { "kind": "Field", "Label": "Type", "DataFieldKey": "Cable.TypeDesignation", "WidthMm": null },
+            { "kind": "Field", "Label": "Length (mm)", "DataFieldKey": "Cable.LengthMm", "WidthMm": null }
+        ]
+    },
+    "Footer": null,
+    "Body": [
+        { "kind": "DrawingArea", "PlaceholderKey": "FER-CONN", "HeightMm": 40 },
+        {
+            "kind": "Table",
+            "DataSourceKey": "Cores",
+            "Columns": [
+                { "Header": "Core", "DataFieldKey": "CoreNumber", "WidthMm": 15, "Align": "Right" },
+                { "Header": "Color", "DataFieldKey": "Color", "WidthMm": 20, "Align": "Left" },
+                { "Header": "From Pin", "DataFieldKey": "FromPin", "WidthMm": 40, "Align": "Left" },
+                { "Header": "To Pin", "DataFieldKey": "ToPin", "WidthMm": 40, "Align": "Left" },
+                { "Header": "From Term.", "DataFieldKey": "FromTermination", "WidthMm": 25, "Align": "Left" },
+                { "Header": "To Term.", "DataFieldKey": "ToTermination", "WidthMm": 25, "Align": "Left" },
+                { "Header": "Strip From (mm)", "DataFieldKey": "FromStrippingMm", "WidthMm": 15, "Align": "Right" },
+                { "Header": "Strip To (mm)", "DataFieldKey": "ToStrippingMm", "WidthMm": 15, "Align": "Right" }
+            ]
+        }
+    ],
+    "PageBreak": { "MaxRowsPerPage": null, "OneEntityPerPage": true }
+}

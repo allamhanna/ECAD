@@ -74,6 +74,46 @@ public class ProjectRepository(SqliteConnection connection)
             .ToList();
     }
 
+    /// <summary>Highest SortOrder currently used among a project's pages, for appending a new one after
+    /// them (M12: report pages are appended, never inserted mid-sequence).</summary>
+    public int GetMaxSortOrder(long projectId)
+    {
+        return (int)connection.ExecuteScalar<long>(
+            "SELECT IFNULL(MAX(SortOrder), 0) FROM Page WHERE ProjectId = @projectId;", new { projectId });
+    }
+
+    /// <summary>M12: first Page update path in the codebase — used only to bump a generated report
+    /// page's PageNumberSegment/SortOrder in place; report pages never change Function/Location/
+    /// DocumentType/PageType after creation.</summary>
+    public void UpdatePage(Page page)
+    {
+        connection.Execute(
+            """
+            UPDATE Page SET FunctionSegment = @FunctionSegment, LocationSegment = @LocationSegment,
+                DocumentTypeSegment = @DocumentTypeSegment, PageNumberSegment = @PageNumberSegment,
+                PageType = @PageTypeValue, FrameFormat = @FrameFormat, SortOrder = @SortOrder
+            WHERE Id = @Id;
+            """,
+            new
+            {
+                page.Id,
+                page.FunctionSegment,
+                page.LocationSegment,
+                page.DocumentTypeSegment,
+                page.PageNumberSegment,
+                PageTypeValue = (int)page.PageType,
+                page.FrameFormat,
+                page.SortOrder,
+            });
+    }
+
+    /// <summary>M12: first Page delete path in the codebase — used to remove a manufacturing-sheet
+    /// report page whose Cable no longer exists. GeneratedReport rows cascade with their Page.</summary>
+    public void DeletePage(long pageId)
+    {
+        connection.Execute("DELETE FROM Page WHERE Id = @pageId;", new { pageId });
+    }
+
     private sealed record ProjectRow(long Id, string Name, string? Customer, string? ProjectNumber, string? Revision,
         string CreatedAtUtc, string? PageStructureSettingsJson, string? NumberingSettingsJson)
     {

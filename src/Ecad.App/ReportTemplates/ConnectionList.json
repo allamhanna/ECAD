@@ -1,0 +1,30 @@
+{
+    "ReportKind": "ConnectionList",
+    "Variant": null,
+    "Page": { "PaperSize": "A3", "Orientation": "Landscape", "MarginLeftMm": 15, "MarginTopMm": 15, "MarginRightMm": 15, "MarginBottomMm": 15 },
+    "Header": {
+        "HeightMm": 12,
+        "Content": [
+            { "kind": "StaticText", "Text": "Connection List", "FontStyle": "Bold", "FontSizePt": 14 }
+        ]
+    },
+    "Footer": null,
+    "Body": [
+        {
+            "kind": "Table",
+            "DataSourceKey": "Connections",
+            "Columns": [
+                { "Header": "From", "DataFieldKey": "FromTag", "WidthMm": 45, "Align": "Left" },
+                { "Header": "To", "DataFieldKey": "ToTag", "WidthMm": 45, "Align": "Left" },
+                { "Header": "Wire #", "DataFieldKey": "WireNumber", "WidthMm": 20, "Align": "Left" },
+                { "Header": "Color", "DataFieldKey": "Color", "WidthMm": 20, "Align": "Left" },
+                { "Header": "Cross-section", "DataFieldKey": "CrossSectionMm2", "WidthMm": 25, "Align": "Right" },
+                { "Header": "From Term.", "DataFieldKey": "FromTermination", "WidthMm": 30, "Align": "Left" },
+                { "Header": "To Term.", "DataFieldKey": "ToTermination", "WidthMm": 30, "Align": "Left" },
+                { "Header": "Cable", "DataFieldKey": "CableTag", "WidthMm": 20, "Align": "Left" },
+                { "Header": "Core", "DataFieldKey": "CoreNumber", "WidthMm": 15, "Align": "Right" }
+            ]
+        }
+    ],
+    "PageBreak": { "MaxRowsPerPage": null, "OneEntityPerPage": false }
+}

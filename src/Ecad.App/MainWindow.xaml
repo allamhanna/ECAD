@@ -23,6 +23,9 @@
         <DataTemplate DataType="{x:Type vm:SymbolBrowserViewModel}">
             <views:SymbolBrowserView/>
         </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:ReportPageViewModel}">
+            <views:ReportPageView/>
+        </DataTemplate>
     </Window.Resources>
     <DockPanel>
         <Menu DockPanel.Dock="Top">
@@ -41,6 +44,14 @@
                 <MenuItem Header="Symbol _Browser" Command="{Binding OpenSymbolBrowserCommand}"/>
                 <Separator/>
                 <MenuItem Header="E_xit" Command="{Binding ExitCommand}"/>
+            </MenuItem>
+            <MenuItem Header="_Reports">
+                <MenuItem Header="_Connection List" Command="{Binding GenerateConnectionListReportCommand}"/>
+                <MenuItem Header="_BOM / Parts List..." Command="{Binding GenerateBomReportCommand}"/>
+                <MenuItem Header="Cable _Overview" Command="{Binding GenerateCableOverviewReportCommand}"/>
+                <MenuItem Header="Cable _Manufacturing Sheets" Command="{Binding GenerateCableManufacturingSheetsCommand}"/>
+                <Separator/>
+                <MenuItem Header="_Regenerate All Reports" Command="{Binding RegenerateAllReportsCommand}"/>
             </MenuItem>
         </Menu>
 
@@ -62,7 +73,8 @@
                     <TextBlock Text="Pages" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0"/>
                     <Button Content="Add Page..." Command="{Binding AddPageCommand}" Padding="8,2"/>
                 </StackPanel>
-                <ListView ItemsSource="{Binding Pages}" Margin="8" MouseDoubleClick="OnPagesDoubleClick">
+                <ListView ItemsSource="{Binding Pages}" Margin="8" MouseDoubleClick="OnPagesDoubleClick"
+                          SelectionMode="Extended" SelectionChanged="OnPagesSelectionChanged">
                     <ListView.View>
                         <GridView>
                             <GridViewColumn Header="Function" Width="70" DisplayMemberBinding="{Binding FunctionSegment}"/>
@@ -71,6 +83,14 @@
                             <GridViewColumn Header="Page #" Width="60" DisplayMemberBinding="{Binding PageNumberSegment}"/>
                         </GridView>
                     </ListView.View>
+                    <ListView.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="_Rename..." Command="{Binding RenameSelectedPageCommand}"/>
+                            <MenuItem Header="Re_number Selected" Command="{Binding RenumberSelectedPagesCommand}"/>
+                            <Separator/>
+                            <MenuItem Header="_Delete Selected" Command="{Binding DeleteSelectedPagesCommand}"/>
+                        </ContextMenu>
+                    </ListView.ContextMenu>
                 </ListView>
             </DockPanel>
 

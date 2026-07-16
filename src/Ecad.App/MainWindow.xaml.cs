@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -34,5 +35,13 @@ public partial class MainWindow : Window
         {
             viewModel.OpenPage(page);
         }
+    }
+
+    /// <summary>ListView.SelectedItems isn't bindable directly (unlike DataGrid's own selection, which
+    /// this app already reads via code-behind per ADR-014) — mirrored here the same way.</summary>
+    private void OnPagesSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is MainViewModel viewModel)
+            viewModel.UpdateSelectedPages(((ListView)sender).SelectedItems.OfType<Page>().ToList());
     }
 }

@@ -1,0 +1,27 @@
+{
+    "ReportKind": "CableOverview",
+    "Variant": null,
+    "Page": { "PaperSize": "A4", "Orientation": "Landscape", "MarginLeftMm": 15, "MarginTopMm": 15, "MarginRightMm": 15, "MarginBottomMm": 15 },
+    "Header": {
+        "HeightMm": 12,
+        "Content": [
+            { "kind": "StaticText", "Text": "Cable Overview", "FontStyle": "Bold", "FontSizePt": 14 }
+        ]
+    },
+    "Footer": null,
+    "Body": [
+        {
+            "kind": "Table",
+            "DataSourceKey": "Cables",
+            "Columns": [
+                { "Header": "Tag", "DataFieldKey": "Tag", "WidthMm": 30, "Align": "Left" },
+                { "Header": "Type", "DataFieldKey": "TypeDesignation", "WidthMm": 40, "Align": "Left" },
+                { "Header": "Length (mm)", "DataFieldKey": "LengthMm", "WidthMm": 25, "Align": "Right" },
+                { "Header": "Cores", "DataFieldKey": "CoreCount", "WidthMm": 20, "Align": "Right" },
+                { "Header": "From", "DataFieldKey": "FromLocation", "WidthMm": 45, "Align": "Left" },
+                { "Header": "To", "DataFieldKey": "ToLocation", "WidthMm": 45, "Align": "Left" }
+            ]
+        }
+    ],
+    "PageBreak": { "MaxRowsPerPage": null, "OneEntityPerPage": false }
+}

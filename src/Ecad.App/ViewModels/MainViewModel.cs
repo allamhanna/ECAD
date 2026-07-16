@@ -3,11 +3,15 @@ using System.IO;
 using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Ecad.App.Reports;
 using Ecad.App.Services;
 using Ecad.App.Views;
+using Ecad.Core.Enums;
 using Ecad.Core.Models;
 using Ecad.Data;
 using Ecad.Data.Import;
+using Ecad.Reports;
+using Ecad.Reports.Builders;
 using Microsoft.Win32;
 
 namespace Ecad.App.ViewModels;
@@ -15,6 +19,7 @@ namespace Ecad.App.ViewModels;
 public partial class MainViewModel : ObservableObject, IDisposable
 {
     private ProjectSession? _session;
+    private ReportEngine? _reportEngine;
 
     [ObservableProperty]
     private string _windowTitle = "ECAD";
@@ -31,6 +36,11 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(CloseProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenGridEditorCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateConnectionListReportCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateBomReportCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateCableOverviewReportCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateCableManufacturingSheetsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RegenerateAllReportsCommand))]
     private bool _isProjectOpen;
 
     [ObservableProperty]
@@ -144,6 +154,68 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Pages.Add(page);
     }
 
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RenameSelectedPageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RenumberSelectedPagesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DeleteSelectedPagesCommand))]
+    private IReadOnlyList<Page> _selectedPages = [];
+
+    /// <summary>ListView.SelectedItems isn't a bindable dependency property — MainWindow's
+    /// code-behind SelectionChanged handler pushes the current selection here (same shape as
+    /// DataGrid.SelectedItems handling elsewhere in this app, ADR-014).</summary>
+    public void UpdateSelectedPages(IReadOnlyList<Page> pages) => SelectedPages = pages;
+
+    private bool CanRenameSelectedPage() => SelectedPages.Count == 1;
+
+    /// <summary>Single-page-only, same scoping Rotate already uses for a canvas selection — a Page's
+    /// own segments (especially PageNumberSegment) are per-page identity, not something several pages
+    /// should be bulk-set to the same value.</summary>
+    [RelayCommand(CanExecute = nameof(CanRenameSelectedPage))]
+    private void RenameSelectedPage()
+    {
+        var page = SelectedPages[0];
+        var dialog = new EditPageDialog(page) { Owner = Application.Current.MainWindow };
+        if (dialog.ShowDialog() != true) return;
+
+        _session!.RenamePage(page.Id, dialog.FunctionSegment, dialog.LocationSegment,
+            dialog.DocumentTypeSegment, dialog.PageNumberSegment, dialog.SelectedPageType);
+    }
+
+    private bool CanActOnSelectedPages() => SelectedPages.Count > 0;
+
+    /// <summary>Auto-sequences Page # as 1, 2, 3... across the selected pages, in their current order in
+    /// the Pages list (not click order) — same auto-sequential convention as "Renumber Wires", just
+    /// scoped to this selection instead of the whole project.</summary>
+    [RelayCommand(CanExecute = nameof(CanActOnSelectedPages))]
+    private void RenumberSelectedPages()
+    {
+        var selectedSet = new HashSet<Page>(SelectedPages);
+        var orderedIds = Pages.Where(selectedSet.Contains).Select(p => p.Id).ToList();
+        _session!.RenumberPages(orderedIds);
+    }
+
+    /// <summary>Cascade-deletes every selected page and everything drawn on it (symbols, wires,
+    /// definition points, cable lines — see ProjectSession.DeletePagesCascade), closing any of their
+    /// tabs first so nothing is left pointing at a page that no longer exists.</summary>
+    [RelayCommand(CanExecute = nameof(CanActOnSelectedPages))]
+    private void DeleteSelectedPages()
+    {
+        var result = MessageBox.Show(
+            $"Delete {SelectedPages.Count} selected page(s)? This removes them — and every symbol, wire, definition point, and cable line on them — permanently. This cannot be undone.",
+            "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes) return;
+
+        var pageIds = SelectedPages.Select(p => p.Id).ToList();
+        var pageIdSet = pageIds.ToHashSet();
+        foreach (var tab in OpenTabs.Where(t => t.PageId is { } id && pageIdSet.Contains(id)).ToList())
+        {
+            (tab.Content as IDisposable)?.Dispose();
+            OpenTabs.Remove(tab);
+        }
+
+        _session!.DeletePagesCascade(pageIds);
+    }
+
     [RelayCommand(CanExecute = nameof(CanImportEplanParts))]
     private async Task ImportEplanPartsAsync()
     {
@@ -199,6 +271,15 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var page = _session!.Pages.FirstOrDefault(p => p.Id == pageId);
         if (page is null) return;
 
+        if (page.PageType == PageType.Report)
+        {
+            var reportViewModel = new ReportPageViewModel(_session, GetOrCreateReportEngine(), page);
+            var reportTab = new DocumentTabViewModel { Header = FormatPageHeader(page), Content = reportViewModel, PageId = pageId };
+            OpenTabs.Add(reportTab);
+            SelectedTab = reportTab;
+            return;
+        }
+
         var viewModel = new SchematicPageViewModel(_session, page, focusPlacementId)
         {
             OwnerWindow = Application.Current.MainWindow,
@@ -208,6 +289,87 @@ public partial class MainViewModel : ObservableObject, IDisposable
         var tab = new DocumentTabViewModel { Header = FormatPageHeader(page), Content = viewModel, PageId = pageId };
         OpenTabs.Add(tab);
         SelectedTab = tab;
+    }
+
+    /// <summary>Loaded once and reused across projects — the report layout templates are app-level
+    /// content (ReportTemplates/), not per-project data.</summary>
+    private ReportEngine GetOrCreateReportEngine()
+    {
+        if (_reportEngine is not null) return _reportEngine;
+
+        _reportEngine = new ReportEngine();
+        _reportEngine.LoadTemplates(Path.Combine(AppContext.BaseDirectory, "ReportTemplates"));
+        if (_reportEngine.LoadWarnings.Count > 0)
+            StatusText = $"Report template warnings: {string.Join("; ", _reportEngine.LoadWarnings)}";
+        return _reportEngine;
+    }
+
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void GenerateConnectionListReport()
+    {
+        GetOrCreateReportEngine();
+        var result = _session!.UpsertGeneratedReportPage(ReportKinds.ConnectionList, ReportDocumentTypeSegments.ConnectionList, null, null);
+        OpenOrFocusPageTab(result.Page.Id, null);
+    }
+
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void GenerateBomReport()
+    {
+        var dialog = new BomGroupingDialog { Owner = Application.Current.MainWindow };
+        if (dialog.ShowDialog() != true) return;
+
+        var groupingKey = dialog.SelectedMode switch
+        {
+            BomGroupingMode.PerLocation => "Location",
+            BomGroupingMode.PerCableAssembly => "CableAssembly",
+            _ => "Project",
+        };
+
+        GetOrCreateReportEngine();
+        var result = _session!.UpsertGeneratedReportPage(ReportKinds.Bom, ReportDocumentTypeSegments.Bom, null, groupingKey);
+        OpenOrFocusPageTab(result.Page.Id, null);
+    }
+
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void GenerateCableOverviewReport()
+    {
+        GetOrCreateReportEngine();
+        var result = _session!.UpsertGeneratedReportPage(ReportKinds.CableOverview, ReportDocumentTypeSegments.CableOverview, null, null);
+        OpenOrFocusPageTab(result.Page.Id, null);
+    }
+
+    /// <summary>Batch: one manufacturing-sheet page per Cable in the project. Also removes any such page
+    /// whose Cable no longer exists (renamed/deleted since the last run) — the same orphan cleanup
+    /// DeleteCable itself performs for a single cable.</summary>
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void GenerateCableManufacturingSheets()
+    {
+        GetOrCreateReportEngine();
+        var cables = _session!.GetAllCables();
+        _session.DeleteOrphanedCableManufacturingSheets(cables.Select(c => c.Id).ToList());
+
+        long? firstPageId = null;
+        foreach (var cable in cables)
+        {
+            var result = _session.UpsertGeneratedReportPage(ReportKinds.CableManufacturingSheet, ReportDocumentTypeSegments.CableManufacturingSheet, cable.Id, null);
+            firstPageId ??= result.Page.Id;
+        }
+
+        StatusText = $"Generated {cables.Count} manufacturing sheet(s).";
+        if (firstPageId is { } id) OpenOrFocusPageTab(id, null);
+    }
+
+    /// <summary>Re-renders every currently open report tab against the latest session data — since a
+    /// report page's content is never cached (ReportPageViewModel re-runs its Builder on open/regenerate
+    /// alike), this needs no ProjectSession involvement at all, just re-triggering each open tab.</summary>
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void RegenerateAllReports()
+    {
+        foreach (var tab in OpenTabs)
+        {
+            if (tab.Content is ReportPageViewModel reportViewModel)
+                reportViewModel.RegenerateCommand.Execute(null);
+        }
     }
 
     [RelayCommand]
@@ -286,9 +448,19 @@ public partial class MainViewModel : ObservableObject, IDisposable
     private void RefreshFromSession()
     {
         WindowTitle = $"ECAD — {_session!.CurrentProject.Name}";
+        _session.PagesChanged += OnPagesChanged;
         Pages.Clear();
         foreach (var page in _session.Pages) Pages.Add(page);
         IsProjectOpen = true;
+    }
+
+    /// <summary>Keeps the Pages list panel in sync with report pages created/reused/removed by
+    /// UpsertGeneratedReportPage, DeleteOrphanedCableManufacturingSheets, or a cable-delete's report
+    /// cleanup — none of which go through the AddPage command's own manual Pages.Add.</summary>
+    private void OnPagesChanged()
+    {
+        Pages.Clear();
+        foreach (var page in _session!.Pages) Pages.Add(page);
     }
 
     private static void SaveLastOpenedProject(string path) =>

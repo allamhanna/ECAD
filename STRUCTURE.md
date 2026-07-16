@@ -67,7 +67,21 @@ electrical CAD/
                              OpenProjectFromPath(path) (shared with auto-reopen); TryAutoReopenLastProject
                              (called once from MainWindow's Loaded, not the constructor — see
                              AppSettingsStore below and ADR-016) checks WasExplicitlyClosed/File.Exists
-                             before reopening the last project and its first page)
+                             before reopening the last project and its first page;
+                             M12/ADR-020: GenerateConnectionListReport/GenerateBomReport (opens
+                             BomGroupingDialog first)/GenerateCableOverviewReport/
+                             GenerateCableManufacturingSheets (batch, one page per Cable, also runs
+                             DeleteOrphanedCableManufacturingSheets first)/RegenerateAllReports (re-runs
+                             every currently-open ReportPageViewModel tab's own Regenerate — nothing is
+                             cached, so there's no ProjectSession work to do here at all); a lazily-
+                             created ReportEngine (GetOrCreateReportEngine, loads ReportTemplates/ once,
+                             reused across projects since templates are app-level content); a
+                             PageType.Report branch in OpenOrFocusPageTab constructs ReportPageViewModel
+                             instead of SchematicPageViewModel; OnPagesChanged (subscribed in
+                             RefreshFromSession) keeps the Pages sidebar list in sync with report pages
+                             created/reused/removed by UpsertGeneratedReportPage/
+                             DeleteOrphanedCableManufacturingSheets/a cable-delete's report cleanup —
+                             none of which go through AddPage's own manual Pages.Add)
                              DocumentTabViewModel (M10) — Header/Content (the actual per-document
                              ViewModel instance)/IsProjectScoped (controls whether CloseCurrentSession
                              closes this tab too)/PageId (schematic-page tabs' find-existing key); a
@@ -125,6 +139,18 @@ electrical CAD/
                              in-memory over AllRows→FilteredRows, not a re-query. Owns its own
                              Library DB connection for the read-only Part combo (same pattern as
                              DevicesGridViewModel/PartsLibraryViewModel)
+                             ReportPageViewModel (M12/ADR-020) — a generated report page's tab content,
+                             much smaller than SchematicPageViewModel (no canvas, no undo/redo stack): on
+                             construction and on every RegenerateCommand, looks up the page's
+                             GeneratedReport identity, re-runs the matching Ecad.Reports Builder against
+                             the CURRENT ProjectSession data, and exposes it as plain data — Title,
+                             HeaderFields (ObservableCollection&lt;ReportHeaderField&gt;, Label/Value), and
+                             a table (Columns: ObservableCollection&lt;ReportColumn&gt;, Rows:
+                             ObservableCollection&lt;IReadOnlyDictionary&lt;string, object?&gt;&gt;) — no
+                             PDF/rendering engine of any kind sits between the data and the screen (see
+                             ADR-020's revision: QuestPDF was tried first, then removed the same day on
+                             licensing/scope grounds). "Regenerate" and "open the page" are the same code
+                             path, so there's no cached-content staleness to manage
                              SchematicPageViewModel — owns a page's CanvasViewport/Placements/Connections/
                              UndoRedoStack; translates raw mouse/keyboard input (reported by
                              SchematicPageView's code-behind, M10) into IUndoableCommand executions;
@@ -250,6 +276,17 @@ electrical CAD/
                              CableCoreDialog (M11/ADR-019) — edits one cable-line crossing's own
                              CableCore directly (core number, cross-section, color), with a uniqueness
                              check on the core number against the cable's other cores
+                             BomGroupingDialog (M12/ADR-020) — three radio buttons (Project/Location/
+                             Cable assembly) shown by the Reports menu's "BOM / Parts List..." command
+                             ReportPageView (M12/ADR-020) — a much smaller UserControl than
+                             SchematicPageView (no canvas, no undo/redo stack): a "Regenerate" button +
+                             title/header-field TextBlocks + an ordinary WPF DataGrid bound to
+                             ReportPageViewModel.Rows, with IsReadOnly/AutoGenerateColumns=False since a
+                             report's column set is data-driven per report kind — the code-behind
+                             (re)builds DataGridTextColumns from ReportPageViewModel.Columns via an
+                             indexer Binding ("[FieldKey]") whenever that collection changes. No PDF or
+                             rendering engine is involved at all (ADR-020's revision) — this is a plain
+                             in-app data table auto-generated from the drawings, not a document
                              SchematicPageView (M10/ADR-016: extracted from the old SchematicPageWindow,
                              a UserControl now hosted as a tab in MainWindow's document TabControl
                              instead of a floating per-page Window; the old static
@@ -306,6 +343,16 @@ electrical CAD/
                              connection without needing to rotate the symbol; pairing two placements of
                              it across pages (via the existing "attach to existing Device" flow) is what
                              represents a cross-page wire continuation — no new schema needed
+      ReportTemplates/       5 hand-authored *.json report layout templates (M12/ADR-020, loose files —
+                             not embedded resources — per REQUIREMENTS 5.9's "editable as files in Phase
+                             1"), Content/CopyToOutputDirectory, loaded at runtime from
+                             AppContext.BaseDirectory: ConnectionList.json, Bom.json, CableOverview.json,
+                             CableManufacturingSheet.FER-FER.json, CableManufacturingSheet.FER-CONN.json
+                             (Variant-selected by Cable.EndTypeClassification)
+      Reports/ReportKinds.cs   the well-known ReportKind/DocumentTypeSegment string constants
+                             MainViewModel/ReportPageViewModel use when generating/opening a report page
+                             — ProjectSession keeps its own private plain-string duplicate of
+                             CableManufacturingSheet's value since Ecad.Data can't reference Ecad.Reports
       Assets/AppIcon.ico     placeholder app icon (multi-size .ico, generated programmatically —
                              not hand-designed): a schematic wire/pin/junction motif matching
                              SchematicCanvasRenderer's own visual language. Set via
@@ -321,10 +368,14 @@ electrical CAD/
                              bound to OpenTabs/SelectedTab, each tab's Content resolved to its View by
                              implicit DataTemplates declared in Window.Resources (keyed by
                              SchematicPageViewModel/GridEditorViewModel/PartsLibraryViewModel/
-                             SymbolBrowserViewModel); a tab-header DataTemplate adds a "✕" close button
-                             bound to CloseTabCommand. File menu (Grid Editor/Parts Library/Symbol
-                             Browser no longer have "..." — they open a tab, not a dialog/window), status bar;
-                             DataContext = MainViewModel
+                             SymbolBrowserViewModel/ReportPageViewModel — M12/ADR-020); a tab-header
+                             DataTemplate adds a "✕" close button bound to CloseTabCommand. File menu
+                             (Grid Editor/Parts Library/Symbol Browser no longer have "..." — they open a
+                             tab, not a dialog/window); M12/ADR-020 added a Reports menu (Connection
+                             List/BOM.../Cable Overview/Cable Manufacturing Sheets/Regenerate All
+                             Reports — nothing else existed to hook a Reports feature into, since no
+                             Export menu exists yet either, that's M13); status bar; DataContext =
+                             MainViewModel
     Ecad.Core/             domain models & business logic (net8.0, no UI/storage deps)
       Models/              Project, Page, Device, DevicePin, Placement, PlacementPin, Connection, ConnectionEnd,
                             Cable (+ ProjectId, M8), CableCore, Part, PartPinTemplate, PartTerminalSpec, PartAccessory, PartImage,
@@ -344,7 +395,12 @@ electrical CAD/
                             X1,Y1,X2,Y2/CableId; CableLineCrossing is Id/CableLineId/ConnectionId?/
                             CableCoreId/RotationDegrees — same independent-entity/nullable-ConnectionId
                             shape as DefinitionPoint, for the same "survive an unrelated auto-connect
-                            rewrite" reason)
+                            rewrite" reason),
+                            GeneratedReport (M12/ADR-020: Id/PageId/ReportKind/SourceEntityId?/
+                            GroupingKey?/GeneratedAtUtc — the identity link a report page's Regenerate
+                            looks up by (ReportKind, SourceEntityId, GroupingKey) to reuse the same Page
+                            instead of duplicating it; SourceEntityId is a Cable.Id for a manufacturing-
+                            sheet page, else null)
       ValueObjects/         DeviceTag (=Function+Location-Tag), PageTag (=Function+Location&DocType/Page)
       Enums/                PageType, PartType, TerminationType, UdpDataType, UdpEntityType,
                             ConnectionEndDesignator, ImportSourceType
@@ -367,6 +423,10 @@ electrical CAD/
       Migrations/Project/0006_cable_line.sql   M11/ADR-019: creates CableLine + CableLineCrossing
       Migrations/Project/0007_definition_point_rotation.sql   M11: adds RotationDegrees to both
                                              DefinitionPoint and CableLineCrossing
+      Migrations/Project/0008_generated_report.sql   M12/ADR-020: creates GeneratedReport (+ a unique
+                                             index on ReportKind/SourceEntityId/GroupingKey, treating
+                                             NULLs as a fixed sentinel via IFNULL so the identity lookup
+                                             works the same whether or not those columns are set)
       MigrationRunner.cs    applies embedded .sql files in order, tracks schema_migrations table
       ProjectDatabase.cs    opens/creates a project's single-file SQLite db, runs Project migrations
       LibraryDatabase.cs    opens/creates %LOCALAPPDATA%\Ecad\library.db, runs Library migrations
@@ -421,13 +481,26 @@ electrical CAD/
                              ReassignCableLine share a private AssignCrossings helper (auto-numbers a
                              fresh CableCore per newly-detected crossing, skips one already assigned to
                              a different cable, mirrors onto Connection.CableId/CableCoreId via the
-                             already-existing UpdateConnectionCable)
+                             already-existing UpdateConnectionCable);
+                             M12/ADR-020 added a _generatedReports (GeneratedReportRepository) field,
+                             GetAllParts/GetAllDevicePins (project-wide, feed report Builders a whole
+                             list at once instead of one lookup per reference), UpsertGeneratedReportPage
+                             (find-or-create a report's Page by its GeneratedReport identity — reused in
+                             place on a match, so re-running a report never duplicates its page),
+                             GetGeneratedReportForPage, DeleteOrphanedCableManufacturingSheets (batch
+                             cleanup for a cable renamed/deleted since the last "Generate All" run),
+                             DeletePage (the first general-purpose page deletion — GeneratedReport rows
+                             cascade with their Page), the PagesChanged event, and extended DeleteCable
+                             to remove that cable's manufacturing-sheet page too
       PlacementDeletionResult.cs   M6: what DeletePlacement did (whole Device removed, or just the
                              placement) — tells DeleteCommand.Undo() which recreate strategy to use
-      Repositories/         ProjectRepository (+ GetFirstProject, GetPages), DeviceRepository
+      Repositories/         ProjectRepository (+ GetFirstProject, GetPages; M12/ADR-020: GetMaxSortOrder,
+                             UpdatePage/DeletePage — the first Page update/delete path in the codebase),
+                             DeviceRepository
                              (+ DeleteDevice, UpdateDeviceTag with Function/Location, GetAllDevices,
                              FindByTag, SuggestNextDesignation — M6; UpdateDevicePart, UpdateDevicePin,
-                             DeleteDevicePin — M8), PlacementRepository
+                             DeleteDevicePin — M8; GetAllDevicePins(projectId) — M12/ADR-020, project-wide
+                             pin lookup for report Builders), PlacementRepository
                              (+ GetOrCreateSymbol, UpdatePosition, UpdateRotation, GetPlacementsForPage,
                              GetSiblingPlacementRefs, GetPlacementPinNames, CountPlacementsForDevice,
                              DeleteExclusiveDevicePinsForPlacement, DeletePlacement — M6; GetPlacementPins
@@ -461,7 +534,12 @@ electrical CAD/
                              UpdateGeometry/UpdateCableId/Delete for CableLine; InsertCrossing/
                              GetCrossingsForLine/GetCrossing/UpdateCrossingRotation/DeleteCrossing/
                              DeleteCrossingsForLine for CableLineCrossing; GetAttachedConnectionIds for
-                             the Grid Editor's read-only guard) —
+                             the Grid Editor's read-only guard),
+                             GeneratedReportRepository (M12/ADR-020: Insert, GetByIdentity — the
+                             (ReportKind, SourceEntityId, GroupingKey) lookup UpsertGeneratedReportPage
+                             uses, matching NULLs via IFNULL the same way the DB's own unique index
+                             does — GetByPageId, GetAllForKind (batch orphan cleanup), UpdateGeneratedAt,
+                             Delete) —
                              Dapper on top of Microsoft.Data.Sqlite
       Import/EplanEdzImporter.cs   parses a real EPLAN .edz (7z, read via SharpCompress) into the
                              Library DB — see ADR-004 for format quirks this handles, ADR-005 for
@@ -537,7 +615,43 @@ electrical CAD/
       Symbols/SymbolDefinition.cs      ConnectionPoint/TextPlaceholder/Variant POCOs + JSON (de)serialization
       Symbols/SymbolLibraryLoader.cs   scans a folder for *.symbol.json + matching .svg (see ADR-006)
       Symbols/SymbolRasterizer.cs      SkiaSharp + Svg.Skia: SVG bytes -> PNG byte array (no WPF dependency)
-    Ecad.Reports/          report layout + QuestPDF generation (net8.0) — QuestPDF added, empty stub
+    Ecad.Reports/          report layout schema + data builders (net8.0) — depends on Ecad.Core only,
+                             zero third-party packages (M12/ADR-020, replacing M0's empty QuestPDF stub;
+                             QuestPDF was tried first, then removed the same day — reports render as
+                             plain in-app data tables, not PDF documents, per the user's licensing/scope
+                             concern — see ADR-020's revision note)
+      LayoutSchema/ReportLayout.cs    the declarative JSON schema (REQUIREMENTS 5.9): ReportLayout/
+                             PageSetup/HeaderFooterRegion/PageBreakRule plus a closed LayoutRegion
+                             hierarchy (StaticTextRegion/FieldRegion/DrawingAreaPlaceholder/
+                             RepeatingTableRegion) deserialized via System.Text.Json's built-in
+                             [JsonPolymorphic]/[JsonDerivedType] type-discriminator attributes —
+                             PageSetup/PageBreakRule are currently unused by anything (no renderer
+                             consumes them yet) but kept as-authored for when M13 needs them for actual
+                             file export
+      LayoutSchema/ReportDataContext.cs   the scalar-dictionary + named-table-row-source object a report
+                             Builder fills — ReportPageViewModel reads it by dotted DataFieldKey/
+                             DataSourceKey, keeping the data model decoupled from however it's displayed
+      LayoutSchema/ReportLayoutLoader.cs   LoadFromFolder(path) — mirrors SymbolLibraryLoader's shape
+                             and its "collect warnings, don't crash on one bad file" tolerance
+      Builders/ConnectionListReportBuilder.cs   from/to tag+pin, wire#/color/cross-section, per-end
+                             termination, cable/core if assigned — REQUIREMENTS 6.4 #1
+      Builders/BomReportBuilder.cs   BomGroupingMode (PerProject/PerLocation/PerCableAssembly);
+                             PartUsageInstance flattens Device.PartId/enabled ConnectionEnd.
+                             TerminationPartId/Cable.PartId into one list, partitioned on OwningCableId —
+                             a cabled instance renders once inside that cable's module and is excluded
+                             from the flat top-level totals (the concrete "no double counting" rule,
+                             REQUIREMENTS 6.3/6.4) — REQUIREMENTS 6.4 #2
+      Builders/CableOverviewReportBuilder.cs   tag/type/length/core-count/from-to-location (derived from
+                             the locations of the devices at either end of every wire on the cable) —
+                             REQUIREMENTS 6.4 #3
+      Builders/CableManufacturingSheetReportBuilder.cs   called once per Cable; selects the ReportLayout
+                             whose Variant matches Cable.EndTypeClassification (e.g. FER-FER/FER-CONN),
+                             falling back to a Variant-less default with a warning (never a hard failure)
+                             if no exact match is loaded — REQUIREMENTS 6.4 #4 (F09-style)
+      ReportEngine.cs        the facade Ecad.App holds: LoadTemplates(folderPath), FindLayout(kind,
+                             variant?), Layouts, LoadWarnings — just template loading/lookup; no
+                             rendering method of any kind lives here (see ADR-020's revision — actual PDF
+                             file export, whichever library it ends up using, is M13's job)
   tests/
     Ecad.Core.Tests/       DeviceTagTests, PageTagTests (8 tests)
     Ecad.Data.Tests/       MigrationTests, ProjectSchemaTests, PartUpsertTests, ProjectSessionTests,
@@ -565,8 +679,13 @@ electrical CAD/
                            regression case, re-home to a different cable, SuggestNextCableTag
                            increments, RotateCableLineCrossing, SetCableLineCrossingCore mirrors onto
                            the live connection, IsCableCoreNumberAvailable),
+                           ProjectSessionGeneratedReportTests (M12/ADR-020: UpsertGeneratedReportPage
+                           reuses the same Page on a repeat identity — no duplicates — creates a
+                           separate page for a different SourceEntityId/GroupingKey, DeleteCable removes
+                           its manufacturing-sheet page, DeleteOrphanedCableManufacturingSheets removes
+                           only the cables no longer live, DeletePage raises PagesChanged),
                            EplanEdzImporterTests (synthetic zip fixtures, see ADR-004/ADR-005),
-                           TempSqliteFile helper (102 tests)
+                           TempSqliteFile helper (111 tests)
     Ecad.Rendering.Tests/  SymbolLibraryLoaderTests, SymbolRasterizerTests, CanvasViewportTests,
                            PlacementHitTesterTests (M10 added 4 HitTestRect tests: fully-inside,
                            partial-overlap, excluded, corner-order-independent; ADR-017 added 2 more for
@@ -579,6 +698,13 @@ electrical CAD/
                            shared-endpoint segment cases, straight and bent IntersectRoute),
                            CableLineHitTesterTests (M11/ADR-019: near/far/nearest-of-two),
                            TempDirectory helper (net8.0-windows, matching Ecad.Rendering's TFM) (86 tests)
+    Ecad.Reports.Tests/    M12/ADR-020, first test project for Ecad.Reports since M0's scaffold —
+                           ReportLayoutLoaderTests (missing folder, valid JSON incl. the polymorphic
+                           LayoutRegion discriminator, malformed-file tolerance), BomReportBuilderTests
+                           (per-project aggregation, per-location split, the cable-assembly
+                           double-counting-exclusion regression), ConnectionListReportBuilderTests,
+                           CableOverviewReportBuilderTests, CableManufacturingSheetReportBuilderTests
+                           (variant selection/fallback/no-layout-throws, per-core row data) (15 tests)
 ```
 
 Note: `Ecad.Rendering` targets `net8.0-windows` with `UseWPF=true` (not plain `net8.0`) because `SkiaSharp.Views.WPF` needs the WPF/Windows target framework to compile.
@@ -587,7 +713,8 @@ Dependency direction: `Ecad.App` depends on `Ecad.Core`, `Ecad.Data`, `Ecad.Rend
 
 Two SQLite databases per ADR-003: a per-project file (Project DB) and a shared `library.db` (Library DB). The `Part`/`PartPinTemplate`/`PartTerminalSpec`/`PartAccessory` tables exist with identical DDL in both — the Project DB's copy is a local cache populated when a Device first references a library Part, so a project file stays portable on its own.
 
-Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 196 tests passing across three test projects (Core 8, Data 102, Rendering 86). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. Verified `SymbolLibrary/*` files actually land in the build output directory (`bin/Debug/net8.0-windows/SymbolLibrary/`). The M5 schematic canvas (place/select/drag/rotate/rename/delete/undo/redo) was click-tested live by the user end-to-end, including two real bugs found and fixed along the way — see ADR-007. The M6 multi-placement devices, segment-aware tagging, and cross-reference display (including across two simultaneously-open page windows) were click-tested live by the user end-to-end, including three real bugs found and fixed along the way — see ADR-008. The M7 auto-connect wiring (pin geometry, manual wire drawing, direction-aware auto-connect/disconnect, junctions, wire numbering) went through several rounds of live user feedback before landing on its final direction-aware, geometrically-live behavior — see ADR-009. The interruption-points follow-up (two-ended symbol, Ctrl+Click page navigation, single-window-per-page dedup) was click-tested live by the user end-to-end right after. M8's Grid Editor (Devices/Connections/Cables tabs, bulk edit) went through five rounds of live-testing bug fixes before being fully confirmed working — see ADR-010 through ADR-015 (graphics-first creation rollback, the Part-caching FK crash, the Delete Selected no-op, the DataGrid placeholder-row crash, and the Device/Cable/Connection delete-semantics distinction). M9 added a 4th Terminations tab reusing every established M8 pattern as-is — builds and tests passed clean on the first real attempt, and the user confirmed the Terminations tab works live with zero bugs found. **M10 (application shell) is fully complete, all four phases** — see ADR-016/ADR-017: Phase 1 (schematic pages as tabs) found and fixed a real `DataContextChanged`/`SKElement` first-paint bug via live testing; grid-as-dots, auto-reopen-last-project, and palette drag-and-drop followed; Phases 2 and 3 (Grid Editor, then Parts Library/Symbol Browser, each as a singleton tab) were built and confirmed working; the pointer model went through three further rounds of live feedback (rubber-band multi-select, then swapped to left-click-drag with right-click becoming a Rotate/Delete/Undo/Redo context menu, then made direction-aware window-vs-crossing select, then fixed to keep tracking past the canvas's edge via mouse capture) with group move/delete as one `CompositeCommand` undo step throughout; Phase 4 (a docked, non-modal device-properties panel replacing the modal rename dialog) completed the milestone.
+Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 220 tests passing across four test projects (Core 8, Data 111, Rendering 86, Reports 15). Confirmed the app process actually starts (`ECAD` main window title observed via `Get-Process`); dialog/list visual behavior for M2 was click-tested live by the user. The M3 import engine was run end-to-end against a disposable copy of the real H2L Robotics `parts.edz`: 636 distinct parts imported into `%LOCALAPPDATA%\Ecad\library.db` in ~5.7s, 0 warnings; a later re-run backfilled images for 525 of those 636 parts. Verified `SymbolLibrary/*` files actually land in the build output directory (`bin/Debug/net8.0-windows/SymbolLibrary/`). The M5 schematic canvas (place/select/drag/rotate/rename/delete/undo/redo) was click-tested live by the user end-to-end, including two real bugs found and fixed along the way — see ADR-007. The M6 multi-placement devices, segment-aware tagging, and cross-reference display (including across two simultaneously-open page windows) were click-tested live by the user end-to-end, including three real bugs found and fixed along the way — see ADR-008. The M7 auto-connect wiring (pin geometry, manual wire drawing, direction-aware auto-connect/disconnect, junctions, wire numbering) went through several rounds of live user feedback before landing on its final direction-aware, geometrically-live behavior — see ADR-009. The interruption-points follow-up (two-ended symbol, Ctrl+Click page navigation, single-window-per-page dedup) was click-tested live by the user end-to-end right after. M8's Grid Editor (Devices/Connections/Cables tabs, bulk edit) went through five rounds of live-testing bug fixes before being fully confirmed working — see ADR-010 through ADR-015 (graphics-first creation rollback, the Part-caching FK crash, the Delete Selected no-op, the DataGrid placeholder-row crash, and the Device/Cable/Connection delete-semantics distinction). M9 added a 4th Terminations tab reusing every established M8 pattern as-is — builds and tests passed clean on the first real attempt, and the user confirmed the Terminations tab works live with zero bugs found. **M10 (application shell) is fully complete, all four phases** — see ADR-016/ADR-017: Phase 1 (schematic pages as tabs) found and fixed a real `DataContextChanged`/`SKElement` first-paint bug via live testing; grid-as-dots, auto-reopen-last-project, and palette drag-and-drop followed; Phases 2 and 3 (Grid Editor, then Parts Library/Symbol Browser, each as a singleton tab) were built and confirmed working; the pointer model went through three further rounds of live feedback (rubber-band multi-select, then swapped to left-click-drag with right-click becoming a Rotate/Delete/Undo/Redo context menu, then made direction-aware window-vs-crossing select, then fixed to keep tracking past the canvas's edge via mouse capture) with group move/delete as one `CompositeCommand` undo step throughout; Phase 4 (a docked, non-modal device-properties panel replacing the modal rename dialog) completed the milestone.
 **M11 (wire & cable definition points) is now also fully complete** — see ADR-018/ADR-019: connection definition points replaced M7's automatic wire numbering with an explicit placement gesture, then went through a genuine root-cause redesign after live testing found moving a connected symbol made a definition point disappear (auto-connect's delete-and-recreate of the underlying `Connection` row was the real cause) — `DefinitionPoint` became a fully independent entity, the same shape `Placement` already used, surviving that churn via a nullable `ConnectionId` with `ON DELETE SET NULL`. Cable definition lines followed the same day, drawing on that just-learned lesson directly (`CableLine`/`CableLineCrossing` built the same way from the start) to resolve ADR-011's long-deferred "revisit once cable-definition-line drawing is built" note — auto-creating cable cores per crossed wire with zero upfront setup, per explicit user request. Both features went through several rounds of live-testing refinement (grid-snap bugs, rotation, red styling, independent crossing selectability) documented in the two ADRs and the 2026-07-11/12 `PROGRESS.md` log entries; every interaction was click-tested live, consistent with this project's established "no UI/canvas-interaction automated tests" pattern.
+**M12 (Reports engine) is now also complete, build/test-verified** — see ADR-020: a report is a `GeneratedReport`-linked `Page` (identity-keyed by `ReportKind`/`SourceEntityId`/`GroupingKey`, so regenerating it reuses the same page rather than duplicating it), populated by one of four pure-data `Ecad.Reports.Builders` and displayed as a plain WPF `DataGrid` — no PDF/rendering engine at all. The first pass built exactly what ADR-001 originally called for (QuestPDF rendering a rasterized preview) and it worked cleanly on the first attempt, but the user reversed that mid-build over QuestPDF's commercial-license cost and a preference for a simple in-app data page over a print-oriented one right now; QuestPDF was removed from `Ecad.Reports` entirely the same day, with the JSON layout schema and all four report Builders surviving untouched (they were always renderer-agnostic). PDF/Excel/CSV export (Section 6.5) stays M13, with the actual export technology now an open, license-aware decision for when that milestone starts rather than one made silently in M12.
 
-This section will be updated with real detail as each milestone lands — next up: M12 (reports engine) or another direction, to be decided with the user.
+This section will be updated with real detail as each milestone lands — next up: M13 (Export: PDF/Excel/CSV) or the user's live-testing feedback on M12, to be decided with the user.
