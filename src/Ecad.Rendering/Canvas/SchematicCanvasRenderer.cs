@@ -55,18 +55,18 @@ public static class SchematicCanvasRenderer
 {
     private static readonly SKColor GridColor = new(220, 220, 220);
     private static readonly SKColor PinColor = new(160, 30, 30);
-    private static readonly SKColor WireColor = new(30, 30, 30);
+    private static readonly SKColor DefaultWireColor = new(30, 30, 30);
     private static readonly SKColor JunctionColor = new(30, 30, 30);
     private static readonly SKColor CableLineColor = new(140, 90, 20);
     private static readonly SKColor DefinitionPointColor = new(200, 30, 30); // red — both a wire's definition point and a cable crossing's tick
 
     public static void Render(SKCanvas canvas, CanvasViewport viewport, int surfaceWidth, int surfaceHeight,
         IReadOnlyList<PlacementRenderInfo> placements, IReadOnlyCollection<long> selectedPlacementIds, WiringRenderInfo wiring,
-        RubberBandRenderInfo? rubberBand = null)
+        RubberBandRenderInfo? rubberBand = null, SKColor? wireColor = null)
     {
         canvas.Clear(SKColors.White);
         DrawGrid(canvas, viewport, surfaceWidth, surfaceHeight);
-        DrawWires(canvas, viewport, wiring.Wires);
+        DrawWires(canvas, viewport, wiring.Wires, wireColor ?? DefaultWireColor);
         DrawJunctions(canvas, viewport, wiring.Junctions);
 
         foreach (var placement in placements)
@@ -152,22 +152,22 @@ public static class SchematicCanvasRenderer
         }
 
         using var textPaint = new SKPaint { Color = SKColors.Black, IsAntialias = true };
-        using var font = new SKFont { Size = 12 };
-        canvas.DrawText(placement.DeviceTag, (float)screenX, (float)(screenY - 4), font, textPaint);
+        using var font = new SKFont { Size = (float)(12 * viewport.Zoom) };
+        canvas.DrawText(placement.DeviceTag, (float)screenX, (float)(screenY - 4 * viewport.Zoom), font, textPaint);
 
         if (placement.SiblingPageLabels.Count > 0)
         {
             using var crossRefPaint = new SKPaint { Color = SKColors.DarkSlateGray, IsAntialias = true };
-            using var crossRefFont = new SKFont { Size = 9 };
+            using var crossRefFont = new SKFont { Size = (float)(9 * viewport.Zoom) };
             var crossRefText = "-> " + string.Join(", ", placement.SiblingPageLabels.Select(label => "Pg " + label));
-            canvas.DrawText(crossRefText, (float)screenX, (float)(screenY + screenHeight + 11), crossRefFont, crossRefPaint);
+            canvas.DrawText(crossRefText, (float)screenX, (float)(screenY + screenHeight + 11 * viewport.Zoom), crossRefFont, crossRefPaint);
         }
     }
 
     private static void DrawPins(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<PinRenderInfo> pins)
     {
         using var pinPaint = new SKPaint { Color = PinColor, IsAntialias = true, Style = SKPaintStyle.Fill };
-        const float radius = 3f;
+        var radius = (float)(3 * viewport.Zoom);
 
         foreach (var pin in pins)
         {
@@ -176,11 +176,11 @@ public static class SchematicCanvasRenderer
         }
     }
 
-    private static void DrawWires(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WireRenderInfo> wires)
+    private static void DrawWires(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WireRenderInfo> wires, SKColor wireColor)
     {
         // The wire line itself never highlights — a connection has no independent selectable identity
         // (see WiringRenderInfo's own doc comment); only a definition point's tick does.
-        using var wirePaint = new SKPaint { Color = WireColor, StrokeWidth = 1.5f, Style = SKPaintStyle.Stroke, IsAntialias = true };
+        using var wirePaint = new SKPaint { Color = wireColor, StrokeWidth = 1.5f, Style = SKPaintStyle.Stroke, IsAntialias = true };
 
         foreach (var wire in wires)
             DrawRoute(canvas, viewport, wire.Route, wirePaint);
@@ -190,7 +190,7 @@ public static class SchematicCanvasRenderer
     {
         var (screenX, screenY) = viewport.WorldToScreen(definitionPoint.X, definitionPoint.Y);
         var tickColor = isSelected ? SKColors.DodgerBlue : DefinitionPointColor;
-        DrawDefinitionPointGlyph(canvas, screenX, screenY, definitionPoint.RotationDegrees, tickColor, definitionPoint.WireNumber, definitionPoint.Color, definitionPoint.CrossSectionMm2);
+        DrawDefinitionPointGlyph(canvas, screenX, screenY, definitionPoint.RotationDegrees, tickColor, definitionPoint.WireNumber, definitionPoint.Color, definitionPoint.CrossSectionMm2, viewport.Zoom);
     }
 
     /// <summary>The diagonal-tick-plus-label glyph shared by wire definition points and cable line
@@ -199,9 +199,9 @@ public static class SchematicCanvasRenderer
     /// upright at a fixed offset for readability, the same way DrawPlacement's tag text never rotates
     /// with the symbol picture.</summary>
     private static void DrawDefinitionPointGlyph(SKCanvas canvas, double screenX, double screenY, int rotationDegrees, SKColor tickColor,
-        string? wireNumber, string? color, double? crossSectionMm2)
+        string? wireNumber, string? color, double? crossSectionMm2, double zoom)
     {
-        const float tickHalfLength = 5f;
+        var tickHalfLength = (float)(5 * zoom);
 
         using (var tickPaint = new SKPaint { Color = tickColor, StrokeWidth = 1.5f, Style = SKPaintStyle.Stroke, IsAntialias = true })
         {
@@ -224,10 +224,10 @@ public static class SchematicCanvasRenderer
         if (labelLines.Count == 0) return;
 
         using var labelPaint = new SKPaint { Color = tickColor, IsAntialias = true };
-        using var labelFont = new SKFont { Size = 9 };
-        const float lineHeight = 11f;
+        using var labelFont = new SKFont { Size = (float)(9 * zoom) };
+        var lineHeight = (float)(11 * zoom);
         for (var i = 0; i < labelLines.Count; i++)
-            canvas.DrawText(labelLines[i], (float)screenX + tickHalfLength + 2, (float)screenY - tickHalfLength + i * lineHeight, labelFont, labelPaint);
+            canvas.DrawText(labelLines[i], (float)screenX + tickHalfLength + (float)(2 * zoom), (float)screenY - tickHalfLength + i * lineHeight, labelFont, labelPaint);
     }
 
     private static void DrawCableLine(SKCanvas canvas, CanvasViewport viewport, CableLineRenderInfo cableLine, bool isSelected)
@@ -246,8 +246,8 @@ public static class SchematicCanvasRenderer
         canvas.DrawLine((float)x1, (float)y1, (float)x2, (float)y2, linePaint);
 
         using var labelPaint = new SKPaint { Color = linePaint.Color, IsAntialias = true };
-        using var labelFont = new SKFont { Size = 10 };
-        canvas.DrawText(cableLine.CableTag, (float)x1 + 4, (float)y1 - 4, labelFont, labelPaint);
+        using var labelFont = new SKFont { Size = (float)(10 * viewport.Zoom) };
+        canvas.DrawText(cableLine.CableTag, (float)(x1 + 4 * viewport.Zoom), (float)(y1 - 4 * viewport.Zoom), labelFont, labelPaint);
     }
 
     private static void DrawCableLineCrossing(SKCanvas canvas, CanvasViewport viewport, CableLineCrossingRenderInfo crossing, bool isSelected)
@@ -255,13 +255,13 @@ public static class SchematicCanvasRenderer
         var (screenX, screenY) = viewport.WorldToScreen(crossing.X, crossing.Y);
         var tickColor = isSelected ? SKColors.DodgerBlue : DefinitionPointColor;
         DrawDefinitionPointGlyph(canvas, screenX, screenY, crossing.RotationDegrees, tickColor,
-            $"{crossing.CableTag}/{crossing.CoreNumber}", crossing.Color, crossing.CrossSectionMm2);
+            $"{crossing.CableTag}/{crossing.CoreNumber}", crossing.Color, crossing.CrossSectionMm2, viewport.Zoom);
     }
 
     private static void DrawJunctions(SKCanvas canvas, CanvasViewport viewport, IReadOnlyList<WorldPoint> junctions)
     {
         using var junctionPaint = new SKPaint { Color = JunctionColor, IsAntialias = true, Style = SKPaintStyle.Fill };
-        const float radius = 3.5f;
+        var radius = (float)(3.5 * viewport.Zoom);
 
         foreach (var point in junctions)
         {

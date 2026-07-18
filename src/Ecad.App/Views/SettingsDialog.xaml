@@ -1,0 +1,83 @@
+<Window x:Class="Ecad.App.Views.SettingsDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Preferences" Height="400" Width="300"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Text="Connection (wire) color:" FontWeight="Bold" Grid.Row="0" Margin="0,0,0,8"/>
+
+        <ListBox x:Name="ColorList" Grid.Row="1" BorderThickness="1" ScrollViewer.VerticalScrollBarVisibility="Auto">
+            <ListBoxItem Tag="#FF0000">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#FF0000" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Red (default)"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#1E1E1E">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#1E1E1E" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Black"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#1F5FBF">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#1F5FBF" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Blue"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#2C8A3D">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#2C8A3D" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Green"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#D9A500">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#D9A500" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Yellow"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#D9701E">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#D9701E" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Orange"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#7A4A2A">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#7A4A2A" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Brown"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#7A7A7A">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#7A7A7A" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Gray"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#7B2FBF">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#7B2FBF" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="Purple"/>
+                </StackPanel>
+            </ListBoxItem>
+            <ListBoxItem Tag="#F2F2F2">
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Width="16" Height="16" Fill="#F2F2F2" Stroke="Gray" StrokeThickness="0.5" Margin="0,0,8,0"/>
+                    <TextBlock Text="White"/>
+                </StackPanel>
+            </ListBoxItem>
+        </ListBox>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="2" Margin="0,12,0,0">
+            <Button Content="OK" Width="80" Margin="0,0,8,0" Click="OnOkClick" IsDefault="True"/>
+            <Button Content="Cancel" Width="80" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

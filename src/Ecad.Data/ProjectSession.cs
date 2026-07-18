@@ -139,6 +139,16 @@ public sealed class ProjectSession : IDisposable
         PagesChanged?.Invoke();
     }
 
+    /// <summary>Persists the Page Navigator's chosen grouping preference (see
+    /// Project.PageNavigatorSettingsJson) — a UI display setting, not project content, so unlike
+    /// RenamePage/RenumberPages this doesn't raise PagesChanged; MainViewModel is both the only writer
+    /// and the only reader.</summary>
+    public void UpdatePageNavigatorSettings(string? json)
+    {
+        CurrentProject.PageNavigatorSettingsJson = json;
+        _projects.UpdatePageNavigatorSettings(CurrentProject.Id, json);
+    }
+
     /// <summary>
     /// Deletes one or more pages entirely, along with everything drawn on them: every Placement (and,
     /// via the same DeletePlacementCore path DeleteDeviceCascade already uses, each Placement's Device if
@@ -718,6 +728,10 @@ public sealed class ProjectSession : IDisposable
     public IReadOnlyList<PlacementPinInfo> GetPlacementPins(long placementId) => _placements.GetPlacementPins(placementId);
 
     public IReadOnlyList<Device> GetAllDevices() => _devices.GetAllDevices(CurrentProject.Id);
+
+    /// <summary>The Devices navigator's "jump to page" target — the placement on the earliest page
+    /// (project order) among a possibly-multi-placement device's placements.</summary>
+    public SiblingPlacementRef? GetFirstPlacementForDevice(long deviceId) => _placements.GetFirstPlacementForDevice(deviceId);
 
     public string SuggestNextDesignation(string? function, string? location) =>
         _devices.SuggestNextDesignation(CurrentProject.Id, function, location);

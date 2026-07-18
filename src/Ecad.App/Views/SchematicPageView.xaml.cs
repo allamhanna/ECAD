@@ -56,9 +56,10 @@ public partial class SchematicPageView : UserControl
     private void OnPaintSurface(object? sender, SKPaintSurfaceEventArgs e)
     {
         if (DataContext is not SchematicPageViewModel viewModel) return;
+        viewModel.ApplyPendingCenter(e.Info.Width, e.Info.Height);
         SchematicCanvasRenderer.Render(e.Surface.Canvas, viewModel.Viewport, e.Info.Width, e.Info.Height,
             viewModel.BuildRenderList(), viewModel.GetEffectiveSelectedPlacementIds(), viewModel.BuildWiringRenderInfo(),
-            viewModel.BuildRubberBandRenderInfo());
+            viewModel.BuildRubberBandRenderInfo(), viewModel.WireColor);
     }
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)

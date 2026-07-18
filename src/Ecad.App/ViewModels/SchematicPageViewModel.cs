@@ -6,6 +6,7 @@ using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Ecad.App.Canvas;
+using Ecad.App.Services;
 using Ecad.App.Views;
 using Ecad.Core.Models;
 using Ecad.Core.ValueObjects;
@@ -222,6 +223,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         _session.ConnectionsChanged += OnSessionConnectionsChanged;
         _session.DefinitionPointsChanged += OnSessionDefinitionPointsChanged;
         _session.CableLinesChanged += OnSessionCableLinesChanged;
+        AppSettingsStore.SettingsChanged += OnAppSettingsChanged;
 
         var folder = Path.Combine(AppContext.BaseDirectory, "SymbolLibrary");
         var result = SymbolLibraryLoader.LoadFromFolder(folder);
@@ -295,7 +297,10 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         }
 
         if (focusPlacementId is { } id && Placements.Any(p => p.PlacementId == id))
+        {
             SelectedPlacementId = id;
+            _pendingCenterPlacementId = id;
+        }
     }
 
     [RelayCommand]
@@ -1898,7 +1903,30 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     {
         if (!Placements.Any(p => p.PlacementId == placementId)) return;
         SelectedPlacementId = placementId;
+        _pendingCenterPlacementId = placementId;
         RedrawRequested?.Invoke();
+    }
+
+    /// <summary>A focus request (FocusPlacement, or the ctor's initial focusPlacementId) can't center
+    /// the viewport immediately — CanvasViewport has no stored surface pixel size, only the View's
+    /// OnPaintSurface sees that, once per frame. Stashed here and resolved by ApplyPendingCenter on
+    /// the next paint, once the surface size is actually known.</summary>
+    private long? _pendingCenterPlacementId;
+
+    /// <summary>Called by SchematicPageView.xaml.cs right before each Render — pans (never zooms) so a
+    /// just-focused placement sits at the center of the current view. Centers on the placement's
+    /// stored X/Y (its un-rotated anchor corner, not its true visual center — picture bounds aren't
+    /// stored per-placement); close enough to bring it into view, not meant to be pixel-exact.</summary>
+    internal void ApplyPendingCenter(double surfaceWidth, double surfaceHeight)
+    {
+        if (_pendingCenterPlacementId is not { } id) return;
+        _pendingCenterPlacementId = null;
+
+        var placement = Placements.FirstOrDefault(p => p.PlacementId == id);
+        if (placement is null) return;
+
+        Viewport.PanX = surfaceWidth / (2 * Viewport.Zoom) - placement.X;
+        Viewport.PanY = surfaceHeight / (2 * Viewport.Zoom) - placement.Y;
     }
 
     internal void UpdatePlacementPosition(long placementId, double x, double y)
@@ -2145,6 +2173,26 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     /// events.</summary>
     private void OnSessionCableLinesChanged() => ReloadCableLinesFromSession();
 
+    /// <summary>The wire line color, read live from Settings > Preferences (default red) — resolved
+    /// fresh on every repaint rather than cached, so a change in the Settings dialog is visible on this
+    /// page's very next paint without needing to reopen it.</summary>
+    public SKColor WireColor
+    {
+        get
+        {
+            try
+            {
+                return SKColor.Parse(AppSettingsStore.Current.WireColorHex);
+            }
+            catch
+            {
+                return SKColor.Parse("#FF0000");
+            }
+        }
+    }
+
+    private void OnAppSettingsChanged() => RedrawRequested?.Invoke();
+
     internal void ReloadCableLinesFromSession()
     {
         CableLines.Clear();
@@ -2172,6 +2220,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         _session.ConnectionsChanged -= OnSessionConnectionsChanged;
         _session.DefinitionPointsChanged -= OnSessionDefinitionPointsChanged;
         _session.CableLinesChanged -= OnSessionCableLinesChanged;
+        AppSettingsStore.SettingsChanged -= OnAppSettingsChanged;
         foreach (var svg in _svgCache.Values) svg.Dispose();
         _svgCache.Clear();
     }

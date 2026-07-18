@@ -150,6 +150,26 @@ public class PlacementRepository(SqliteConnection connection)
         return connection.Query<long>("SELECT Id FROM Placement WHERE DeviceId = @deviceId;", new { deviceId }).ToList();
     }
 
+    /// <summary>The Devices navigator's "jump to page" target for a multi-placement device: the
+    /// placement on the earliest page in the project's own order (Page.SortOrder, not creation
+    /// order) — same lenient-row-mapping reason as GetSiblingPlacementRefs above (zero-row case still
+    /// needs a concrete type for the computed PageLabel column).</summary>
+    public SiblingPlacementRef? GetFirstPlacementForDevice(long deviceId)
+    {
+        var row = connection.QuerySingleOrDefault<SiblingPlacementRow>(
+            """
+            SELECT p.Id AS PlacementId, p.PageId, pg.PageNumberSegment
+            FROM Placement p
+            JOIN Page pg ON pg.Id = p.PageId
+            WHERE p.DeviceId = @deviceId
+            ORDER BY pg.SortOrder, pg.Id, p.Id
+            LIMIT 1;
+            """,
+            new { deviceId });
+
+        return row is null ? null : new SiblingPlacementRef(row.PlacementId, row.PageId, row.PageNumberSegment ?? $"#{row.PageId}");
+    }
+
     /// <summary>
     /// Deletes the DevicePins this placement exposes that no other placement also exposes — the
     /// pins "exclusive" to this placement (e.g. a contact block's 13/14, not shared with the coil's

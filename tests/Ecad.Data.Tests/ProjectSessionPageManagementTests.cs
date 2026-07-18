@@ -98,4 +98,18 @@ public class ProjectSessionPageManagementTests
 
         Assert.Empty(session.Pages);
     }
+
+    [Fact]
+    public void UpdatePageNavigatorSettings_PersistsOnCurrentProjectAndReloadsFromDisk()
+    {
+        using var file = new TempSqliteFile();
+        using (var session = CreateSession(file))
+        {
+            session.UpdatePageNavigatorSettings("""{"GroupBy":"Location"}""");
+            Assert.Equal("""{"GroupBy":"Location"}""", session.CurrentProject.PageNavigatorSettingsJson);
+        }
+
+        using var reopened = ProjectSession.Open(file.Path);
+        Assert.Equal("""{"GroupBy":"Location"}""", reopened.CurrentProject.PageNavigatorSettingsJson);
+    }
 }

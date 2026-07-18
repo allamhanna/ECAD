@@ -46,6 +46,11 @@ public sealed partial class DevicesGridViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private Part? _bulkAssignPart;
 
+    /// <summary>Raised by NavigateToDevice (the Devices Navigator's double-click action) — carries
+    /// (PageId, PlacementId), same shape as SchematicPageViewModel.NavigateToPageRequested, wired by
+    /// MainViewModel to the same OpenOrFocusPageTab entry point cross-reference navigation uses.</summary>
+    public event Action<long, long>? NavigateToPageRequested;
+
     public DevicesGridViewModel(ProjectSession session)
     {
         _session = session;
@@ -115,6 +120,16 @@ public sealed partial class DevicesGridViewModel : ObservableObject, IDisposable
     /// Library-to-project Part-caching step above.</summary>
     public void CommitDeviceEdit(DeviceRow row) =>
         _session.RenameDeviceTag(row.Id, row.FunctionSegment, row.LocationSegment, row.DeviceTagSegment);
+
+    /// <summary>A Device has no direct page of its own — this resolves to the placement on its
+    /// earliest page (project order) among possibly several, and asks whoever's listening
+    /// (MainViewModel) to jump there. A multi-placement device's other placements stay reachable
+    /// from there via the canvas's own Ctrl+Click cross-reference navigation, same as today.</summary>
+    public void NavigateToDevice(DeviceRow device)
+    {
+        var target = _session.GetFirstPlacementForDevice(device.Id);
+        if (target is not null) NavigateToPageRequested?.Invoke(target.PageId, target.PlacementId);
+    }
 
     public void Dispose() => _libraryConnection.Dispose();
 }

@@ -44,4 +44,14 @@ public partial class MainWindow : Window
         if (DataContext is MainViewModel viewModel)
             viewModel.UpdateSelectedPages(((ListView)sender).SelectedItems.OfType<Page>().ToList());
     }
+
+    /// <summary>The Pages panel's "⚙" settings button opens its own ContextMenu on left-click rather
+    /// than the usual right-click, since it IS the click target (there's nothing else on this button
+    /// a right-click would make sense for).</summary>
+    private void OnPagesSettingsClick(object sender, RoutedEventArgs e)
+    {
+        var button = (Button)sender;
+        button.ContextMenu!.PlacementTarget = button;
+        button.ContextMenu.IsOpen = true;
+    }
 }

@@ -27,6 +27,28 @@ public class ProjectSessionMultiPlacementTests
     }
 
     [Fact]
+    public void GetFirstPlacementForDevice_MultiplePlacements_ReturnsTheOneOnTheEarliestPage()
+    {
+        using var file = new TempSqliteFile();
+        using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
+        var earlyPage = session.AddPage(new Page { PageNumberSegment = "1" });
+        var latePage = session.AddPage(new Page { PageNumberSegment = "2" });
+
+        // Placed on the later page first, then attached to the earlier page second — creation order
+        // is the opposite of page order, proving the lookup follows Page.SortOrder, not Placement.Id.
+        var contact = session.PlaceSymbol(latePage.Id, "ContactNO", null, "SymbolLibrary/ContactNO.svg", "Contacts",
+            ["13", "14"], 0, 0, null, null, "K1");
+        var coil = session.PlaceSymbolOnExistingDevice(contact.DeviceId, earlyPage.Id, "RelayCoil", null,
+            "SymbolLibrary/RelayCoil.svg", "Coils", ["A1", "A2"], 0, 0);
+
+        var target = session.GetFirstPlacementForDevice(contact.DeviceId);
+
+        Assert.NotNull(target);
+        Assert.Equal(earlyPage.Id, target!.PageId);
+        Assert.Equal(coil.Id, target.PlacementId);
+    }
+
+    [Fact]
     public void DeletePlacement_NonLastPlacement_KeepsDeviceAndSiblingAlive_RemovesOnlyExclusivePins()
     {
         using var file = new TempSqliteFile();

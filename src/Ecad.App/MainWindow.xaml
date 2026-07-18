@@ -6,6 +6,7 @@
         xmlns:local="clr-namespace:Ecad.App"
         xmlns:vm="clr-namespace:Ecad.App.ViewModels"
         xmlns:views="clr-namespace:Ecad.App.Views"
+        xmlns:conv="clr-namespace:Ecad.App.Converters"
         mc:Ignorable="d"
         Title="{Binding WindowTitle}" Height="700" Width="1200" Icon="Assets/AppIcon.ico">
     <Window.Resources>
@@ -26,6 +27,11 @@
         <DataTemplate DataType="{x:Type vm:ReportPageViewModel}">
             <views:ReportPageView/>
         </DataTemplate>
+
+        <conv:EnumEqualityConverter x:Key="EnumEqualityConverter"/>
+        <conv:BlankGroupLabelConverter x:Key="BlankGroupLabelConverter"/>
+        <conv:BoolToColumnWidthConverter x:Key="BoolToColumnWidthConverter"/>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </Window.Resources>
     <DockPanel>
         <Menu DockPanel.Dock="Top">
@@ -53,6 +59,13 @@
                 <Separator/>
                 <MenuItem Header="_Regenerate All Reports" Command="{Binding RegenerateAllReportsCommand}"/>
             </MenuItem>
+            <MenuItem Header="_View">
+                <MenuItem Header="_Page Navigator" IsCheckable="True" IsChecked="{Binding IsPageNavigatorVisible, Mode=TwoWay}"/>
+                <MenuItem Header="_Devices Navigator" IsCheckable="True" IsChecked="{Binding IsDevicesNavigatorVisible, Mode=TwoWay}"/>
+            </MenuItem>
+            <MenuItem Header="_Settings">
+                <MenuItem Header="_Preferences..." Command="{Binding OpenSettingsCommand}"/>
+            </MenuItem>
         </Menu>
 
         <StatusBar DockPanel.Dock="Bottom">
@@ -63,15 +76,35 @@
 
         <Grid>
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="260"/>
+                <ColumnDefinition Width="{Binding IsPageNavigatorVisible, Converter={StaticResource BoolToColumnWidthConverter}}"/>
                 <ColumnDefinition Width="4"/>
                 <ColumnDefinition Width="*"/>
             </Grid.ColumnDefinitions>
 
-            <DockPanel Grid.Column="0">
+            <TabControl Grid.Column="0" Visibility="{Binding IsPageNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+            <TabItem Header="Pages">
+            <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="8">
                     <TextBlock Text="Pages" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                    <Button Content="Add Page..." Command="{Binding AddPageCommand}" Padding="8,2"/>
+                    <Button Content="Add Page..." Command="{Binding AddPageCommand}" Padding="8,2" Margin="0,0,4,0"/>
+                    <Button Content="⚙" Padding="6,2" ToolTip="Page Navigator settings" Click="OnPagesSettingsClick">
+                        <Button.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="No Grouping" IsCheckable="True"
+                                          IsChecked="{Binding PageGroupBy, Converter={StaticResource EnumEqualityConverter}, ConverterParameter={x:Static vm:PageGroupBy.None}, Mode=OneWay}"
+                                          Command="{Binding SetPageGroupByCommand}" CommandParameter="{x:Static vm:PageGroupBy.None}"/>
+                                <MenuItem Header="Group by Function" IsCheckable="True"
+                                          IsChecked="{Binding PageGroupBy, Converter={StaticResource EnumEqualityConverter}, ConverterParameter={x:Static vm:PageGroupBy.Function}, Mode=OneWay}"
+                                          Command="{Binding SetPageGroupByCommand}" CommandParameter="{x:Static vm:PageGroupBy.Function}"/>
+                                <MenuItem Header="Group by Location" IsCheckable="True"
+                                          IsChecked="{Binding PageGroupBy, Converter={StaticResource EnumEqualityConverter}, ConverterParameter={x:Static vm:PageGroupBy.Location}, Mode=OneWay}"
+                                          Command="{Binding SetPageGroupByCommand}" CommandParameter="{x:Static vm:PageGroupBy.Location}"/>
+                                <MenuItem Header="Group by Document Type" IsCheckable="True"
+                                          IsChecked="{Binding PageGroupBy, Converter={StaticResource EnumEqualityConverter}, ConverterParameter={x:Static vm:PageGroupBy.DocumentType}, Mode=OneWay}"
+                                          Command="{Binding SetPageGroupByCommand}" CommandParameter="{x:Static vm:PageGroupBy.DocumentType}"/>
+                            </ContextMenu>
+                        </Button.ContextMenu>
+                    </Button>
                 </StackPanel>
                 <ListView ItemsSource="{Binding Pages}" Margin="8" MouseDoubleClick="OnPagesDoubleClick"
                           SelectionMode="Extended" SelectionChanged="OnPagesSelectionChanged">
@@ -83,6 +116,26 @@
                             <GridViewColumn Header="Page #" Width="60" DisplayMemberBinding="{Binding PageNumberSegment}"/>
                         </GridView>
                     </ListView.View>
+                    <ListView.GroupStyle>
+                        <GroupStyle>
+                            <GroupStyle.ContainerStyle>
+                                <Style TargetType="{x:Type GroupItem}">
+                                    <Setter Property="Template">
+                                        <Setter.Value>
+                                            <ControlTemplate TargetType="{x:Type GroupItem}">
+                                                <Expander IsExpanded="True" FontWeight="Bold" Background="#EEEEEE">
+                                                    <Expander.Header>
+                                                        <TextBlock Text="{Binding Name, Converter={StaticResource BlankGroupLabelConverter}}" FontWeight="Bold"/>
+                                                    </Expander.Header>
+                                                    <ItemsPresenter Margin="16,0,0,0"/>
+                                                </Expander>
+                                            </ControlTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </Style>
+                            </GroupStyle.ContainerStyle>
+                        </GroupStyle>
+                    </ListView.GroupStyle>
                     <ListView.ContextMenu>
                         <ContextMenu>
                             <MenuItem Header="_Rename..." Command="{Binding RenameSelectedPageCommand}"/>
@@ -93,8 +146,14 @@
                     </ListView.ContextMenu>
                 </ListView>
             </DockPanel>
+            </TabItem>
+            <TabItem Header="Devices" Visibility="{Binding IsDevicesNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <views:DevicesNavigatorView DataContext="{Binding DevicesNavigator}"/>
+            </TabItem>
+            </TabControl>
 
-            <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="LightGray"/>
+            <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch" Background="LightGray"
+                          Visibility="{Binding IsPageNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}"/>
 
             <TabControl Grid.Column="2" ItemsSource="{Binding OpenTabs}" SelectedItem="{Binding SelectedTab}">
                 <TabControl.ItemTemplate>

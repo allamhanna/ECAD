@@ -114,8 +114,16 @@ public class ProjectRepository(SqliteConnection connection)
         connection.Execute("DELETE FROM Page WHERE Id = @pageId;", new { pageId });
     }
 
+    /// <summary>Persists the Page Navigator's chosen grouping — a UI display preference kept
+    /// per-project (see Project.PageNavigatorSettingsJson), not fanned out via any live-sync event
+    /// since MainViewModel is the only reader/writer.</summary>
+    public void UpdatePageNavigatorSettings(long projectId, string? json)
+    {
+        connection.Execute("UPDATE Project SET PageNavigatorSettingsJson = @json WHERE Id = @projectId;", new { projectId, json });
+    }
+
     private sealed record ProjectRow(long Id, string Name, string? Customer, string? ProjectNumber, string? Revision,
-        string CreatedAtUtc, string? PageStructureSettingsJson, string? NumberingSettingsJson)
+        string CreatedAtUtc, string? PageStructureSettingsJson, string? NumberingSettingsJson, string? PageNavigatorSettingsJson)
     {
         public Project ToModel() => new()
         {
@@ -127,6 +135,7 @@ public class ProjectRepository(SqliteConnection connection)
             CreatedAtUtc = DateTimeOffset.Parse(CreatedAtUtc),
             PageStructureSettingsJson = PageStructureSettingsJson,
             NumberingSettingsJson = NumberingSettingsJson,
+            PageNavigatorSettingsJson = PageNavigatorSettingsJson,
         };
     }
 

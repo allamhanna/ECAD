@@ -1,6 +1,9 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
+using System.Windows.Data;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Ecad.App.Reports;
@@ -49,6 +52,28 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<Page> Pages { get; } = [];
     public ObservableCollection<DocumentTabViewModel> OpenTabs { get; } = [];
+
+    /// <summary>The Pages sidebar's current grouping — a per-project display preference (see
+    /// Project.PageNavigatorSettingsJson), not project content.</summary>
+    [ObservableProperty]
+    private PageGroupBy _pageGroupBy = PageGroupBy.None;
+
+    /// <summary>View > Page Navigator — in-memory only, not persisted (not asked for; resets to
+    /// visible on every launch).</summary>
+    [ObservableProperty]
+    private bool _isPageNavigatorVisible = true;
+
+    /// <summary>View > Devices Navigator — same in-memory-only scope cut as IsPageNavigatorVisible.
+    /// Controls whether the Devices tab appears in the sidebar's tab strip at all (a collapsed
+    /// TabItem is removed from the strip, not just hidden-but-present).</summary>
+    [ObservableProperty]
+    private bool _isDevicesNavigatorVisible = true;
+
+    /// <summary>The Devices Navigator's data/commands — project-scoped, created in
+    /// RefreshFromSession alongside Pages, moved here from the (now Devices-less) Grid Editor so it
+    /// isn't duplicated between the sidebar and a Grid Editor tab.</summary>
+    [ObservableProperty]
+    private DevicesGridViewModel? _devicesNavigator;
 
     [ObservableProperty]
     private DocumentTabViewModel? _selectedTab;
@@ -214,6 +239,63 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         _session!.DeletePagesCascade(pageIds);
+    }
+
+    /// <summary>The Pages ListView's own settings gear — picks which segment "structural" group
+    /// headers are built from (or none, the flat list). Grouping is a pure ICollectionView-level
+    /// transform over the same Pages collection (PropertyGroupDescription + a matching SortDescription
+    /// so groups appear alphabetically rather than in first-seen order) — no new data structures, and
+    /// Pages.Clear()/Add() elsewhere (RefreshFromSession/OnPagesChanged) don't disturb it since they
+    /// mutate the same collection instance the cached default view is attached to.</summary>
+    [RelayCommand]
+    private void SetPageGroupBy(PageGroupBy groupBy) => PageGroupBy = groupBy;
+
+    partial void OnPageGroupByChanged(PageGroupBy value)
+    {
+        ApplyPageGrouping();
+        PersistPageNavigatorSettings();
+    }
+
+    private void ApplyPageGrouping()
+    {
+        var view = CollectionViewSource.GetDefaultView(Pages);
+        view.GroupDescriptions.Clear();
+        view.SortDescriptions.Clear();
+
+        var propertyName = PageGroupBy switch
+        {
+            PageGroupBy.Function => nameof(Page.FunctionSegment),
+            PageGroupBy.Location => nameof(Page.LocationSegment),
+            PageGroupBy.DocumentType => nameof(Page.DocumentTypeSegment),
+            _ => null,
+        };
+        if (propertyName is null) return;
+
+        view.GroupDescriptions.Add(new PropertyGroupDescription(propertyName));
+        view.SortDescriptions.Add(new SortDescription(propertyName, ListSortDirection.Ascending));
+    }
+
+    private void LoadPageNavigatorSettings()
+    {
+        var json = _session!.CurrentProject.PageNavigatorSettingsJson;
+        PageNavigatorSettings settings;
+        try
+        {
+            settings = string.IsNullOrEmpty(json) ? new PageNavigatorSettings()
+                : JsonSerializer.Deserialize<PageNavigatorSettings>(json) ?? new PageNavigatorSettings();
+        }
+        catch (JsonException)
+        {
+            settings = new PageNavigatorSettings();
+        }
+
+        PageGroupBy = settings.GroupBy; // triggers OnPageGroupByChanged -> ApplyPageGrouping + a harmless re-save of the same value
+    }
+
+    private void PersistPageNavigatorSettings()
+    {
+        var json = JsonSerializer.Serialize(new PageNavigatorSettings { GroupBy = PageGroupBy });
+        _session!.UpdatePageNavigatorSettings(json);
     }
 
     [RelayCommand(CanExecute = nameof(CanImportEplanParts))]
@@ -445,6 +527,13 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private static void Exit() => Application.Current.Shutdown();
 
+    [RelayCommand]
+    private static void OpenSettings()
+    {
+        var dialog = new SettingsDialog { Owner = Application.Current.MainWindow };
+        dialog.ShowDialog();
+    }
+
     private void RefreshFromSession()
     {
         WindowTitle = $"ECAD — {_session!.CurrentProject.Name}";
@@ -452,7 +541,14 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Pages.Clear();
         foreach (var page in _session.Pages) Pages.Add(page);
         IsProjectOpen = true;
+        LoadPageNavigatorSettings();
+
+        DevicesNavigator = new DevicesGridViewModel(_session);
+        DevicesNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
+        _session.PlacementsChanged += RefreshDevicesNavigator;
     }
+
+    private void RefreshDevicesNavigator() => DevicesNavigator?.Refresh();
 
     /// <summary>Keeps the Pages list panel in sync with report pages created/reused/removed by
     /// UpsertGeneratedReportPage, DeleteOrphanedCableManufacturingSheets, or a cable-delete's report
@@ -506,6 +602,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _session = null;
         Pages.Clear();
         IsProjectOpen = false;
+
+        DevicesNavigator?.Dispose();
+        DevicesNavigator = null;
     }
 
     public void Dispose()
@@ -516,6 +615,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             OpenTabs.Remove(tab);
         }
 
+        DevicesNavigator?.Dispose();
         _session?.Dispose();
     }
 }

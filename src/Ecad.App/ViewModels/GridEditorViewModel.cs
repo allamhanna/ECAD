@@ -4,15 +4,16 @@ namespace Ecad.App.ViewModels;
 
 /// <summary>
 /// Composition root for the M8 Grid Editor window: one instance per open project, hosting the
-/// Devices/Connections/Cables tab view-models. Subscribes to ProjectSession's live-sync events
-/// once and fans out to whichever tab(s) hold derived data — same cross-window live-sync pattern
-/// PlacementsChanged/ConnectionsChanged already established for SchematicPageWindow (ADR-008/009).
+/// Connections/Cables/Terminations tab view-models (Devices moved to the sidebar's Devices
+/// Navigator — MainViewModel.DevicesNavigator — so it isn't duplicated here). Subscribes to
+/// ProjectSession's live-sync events once and fans out to whichever tab(s) hold derived data — same
+/// cross-window live-sync pattern PlacementsChanged/ConnectionsChanged already established for
+/// SchematicPageWindow (ADR-008/009).
 /// </summary>
 public sealed class GridEditorViewModel : IDisposable
 {
     private readonly ProjectSession _session;
 
-    public DevicesGridViewModel DevicesTab { get; }
     public ConnectionsGridViewModel ConnectionsTab { get; }
     public CablesGridViewModel CablesTab { get; }
     public TerminationsGridViewModel TerminationsTab { get; }
@@ -20,7 +21,6 @@ public sealed class GridEditorViewModel : IDisposable
     public GridEditorViewModel(ProjectSession session)
     {
         _session = session;
-        DevicesTab = new DevicesGridViewModel(session);
         ConnectionsTab = new ConnectionsGridViewModel(session);
         CablesTab = new CablesGridViewModel(session);
         TerminationsTab = new TerminationsGridViewModel(session);
@@ -32,7 +32,6 @@ public sealed class GridEditorViewModel : IDisposable
 
     private void OnPlacementsChanged()
     {
-        DevicesTab.Refresh();
         ConnectionsTab.RefreshDevicePinOptions();
         TerminationsTab.Refresh();
     }
@@ -54,7 +53,6 @@ public sealed class GridEditorViewModel : IDisposable
         _session.PlacementsChanged -= OnPlacementsChanged;
         _session.ConnectionsChanged -= OnConnectionsChanged;
         _session.CablesChanged -= OnCablesChanged;
-        DevicesTab.Dispose();
         TerminationsTab.Dispose();
     }
 }

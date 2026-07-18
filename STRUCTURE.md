@@ -2,7 +2,7 @@
 
 This file describes the actual folder/solution layout as it exists, kept in sync as the project is built. See `DECISIONS.md` ADR-001 for the stack rationale and `PROGRESS.md` for what's built vs planned.
 
-## Current layout (as of M11 — connection definition points + cable definition lines, complete)
+## Current layout (as of M12 — reports engine — plus the post-M12 Settings/Page-Navigator/Devices-Navigator work, see the dated summary near the end of this file)
 
 ```
 electrical CAD/
@@ -82,6 +82,24 @@ electrical CAD/
                              created/reused/removed by UpsertGeneratedReportPage/
                              DeleteOrphanedCableManufacturingSheets/a cable-delete's report cleanup —
                              none of which go through AddPage's own manual Pages.Add)
+                             ADR-021: OpenSettingsCommand opens SettingsDialog (app-level, no
+                             ProjectSession involvement).
+                             ADR-022: PageGroupBy (+ SetPageGroupByCommand, ApplyPageGrouping — an
+                             ICollectionView GroupDescription+SortDescription pair over Pages, see
+                             MainWindow.xaml(.cs) below) and its persistence
+                             (LoadPageNavigatorSettings/PersistPageNavigatorSettings, JSON round-tripped
+                             through the new Project.PageNavigatorSettingsJson column — deliberately a
+                             new column rather than reusing the still-unused PageStructureSettingsJson,
+                             which is earmarked for a different, unrelated concern per its own doc
+                             comment); IsPageNavigatorVisible/IsDevicesNavigatorVisible (in-memory only,
+                             not persisted — View menu checkboxes); DevicesNavigator
+                             (DevicesGridViewModel?, created in RefreshFromSession alongside Pages,
+                             disposed in CloseCurrentSession/Dispose, refreshed via a
+                             _session.PlacementsChanged subscription) — moved here from
+                             GridEditorViewModel's old ownership so Devices isn't duplicated between the
+                             sidebar and a Grid Editor tab; wires DevicesNavigator.NavigateToPageRequested
+                             straight into the existing OpenOrFocusPageTab, the same entry point
+                             cross-reference navigation already uses
                              DocumentTabViewModel (M10) — Header/Content (the actual per-document
                              ViewModel instance)/IsProjectScoped (controls whether CloseCurrentSession
                              closes this tab too)/PageId (schematic-page tabs' find-existing key); a
@@ -91,25 +109,30 @@ electrical CAD/
                              over all Parts + detail lookups (PinTemplates/TerminalSpecs/Accessories/
                              PreviewImage, the last built as a frozen BitmapImage from the cached BLOB)
                              GridEditorViewModel (M8, M9 added TerminationsGridViewModel as a 4th
-                             tab) — composition root for the Grid Editor window: owns
-                             DevicesGridViewModel/ConnectionsGridViewModel/CablesGridViewModel/
-                             TerminationsGridViewModel, subscribes once to
-                             PlacementsChanged/ConnectionsChanged/CablesChanged and fans out to
-                             whichever tab(s) hold derived data
+                             tab; ADR-022 removed Devices — see MainViewModel.DevicesNavigator above) —
+                             composition root for the Grid Editor window: owns
+                             ConnectionsGridViewModel/CablesGridViewModel/TerminationsGridViewModel,
+                             subscribes once to PlacementsChanged/ConnectionsChanged/CablesChanged and
+                             fans out to whichever tab(s) hold derived data
                              DevicesGridViewModel (M8, edit-only per ADR-011 — no Device creation
-                             here, only placing a symbol on a page creates one) — Devices tab: edit
-                             Function/Location/Tag inline, bulk-assign a Part across a multi-selection
-                             (the ONLY way to assign a Part — see ADR-012: a two-way-bound per-row
-                             combo can't reconcile the Library Part.Id used for picking against the
-                             project-local Part.Id actually stored on Device.PartId, so the grid
-                             works off a DeviceRow display shape — Id/Function/Location/Tag/PartId/
-                             PartExternalKey, following PlacementWithSymbol's flattened-read-shape
-                             precedent — with the Part column read-only, showing PartExternalKey);
-                             owns its own Library DB connection for the read-only Part combo (same
-                             pattern as PartsLibraryViewModel). Delete Selected always cascade-deletes
-                             (ProjectSession.DeleteDeviceCascade, ADR-015) — Devices are parts with
-                             independent identity, so grid-deleting one removes it and every symbol
-                             placed for it, on every page, not just a data-only row
+                             here, only placing a symbol on a page creates one; ADR-022 moved this out
+                             of GridEditorViewModel's ownership into MainViewModel.DevicesNavigator, now
+                             backing the sidebar's Devices tab instead of a Grid Editor tab — the
+                             ViewModel itself is unchanged, only who owns/displays it) — bulk-assign a
+                             Part across a multi-selection (the ONLY way to assign a Part — see ADR-012:
+                             a two-way-bound per-row combo can't reconcile the Library Part.Id used for
+                             picking against the project-local Part.Id actually stored on Device.PartId,
+                             so the grid works off a DeviceRow display shape — Id/Function/Location/Tag/
+                             PartId/PartExternalKey, following PlacementWithSymbol's flattened-read-shape
+                             precedent); owns its own Library DB connection for the read-only Part combo
+                             (same pattern as PartsLibraryViewModel). Delete Selected always
+                             cascade-deletes (ProjectSession.DeleteDeviceCascade, ADR-015) — Devices are
+                             parts with independent identity, so deleting one removes it and every
+                             symbol placed for it, on every page, not just a data-only row. New
+                             NavigateToPageRequested event (ADR-022, same shape as
+                             SchematicPageViewModel's own) + NavigateToDevice(DeviceRow) resolves a
+                             possibly-multi-placement device's jump target via the new
+                             ProjectSession.GetFirstPlacementForDevice (earliest page in project order)
                              ConnectionsGridViewModel (M8, edit-only per ADR-011 — no Connection
                              creation here, only drawing/auto-connecting on a page creates one; per
                              ADR-015, also no Connection deletion here — a Connection has no identity
@@ -167,6 +190,16 @@ electrical CAD/
                              NavigateToPageRequested event (siblingPageId, siblingPlacementId) — fires
                              for any placement with a sibling, not just interruption points; optional
                              focusPlacementId constructor parameter selects that placement once loaded.
+                             ADR-022: focusing a placement (this constructor parameter, and
+                             FocusPlacement for an already-open tab) also stashes
+                             _pendingCenterPlacementId, resolved by ApplyPendingCenter(surfaceWidth,
+                             surfaceHeight) — called from SchematicPageView's OnPaintSurface right before
+                             Render, since CanvasViewport has no stored surface pixel size of its own.
+                             Pans Viewport.PanX/PanY to center the placement's stored X/Y; never touches
+                             Zoom. Fixes a real gap found while building the Devices Navigator: focusing
+                             a placement previously only selected it, never brought it into view — this
+                             fixes every existing focus call site at once, including Ctrl+Click
+                             cross-reference navigation above.
                              M10/ADR-016 additions: GridSpacing (+ GridSpacingOptions 10/20/40/80,
                              two-way bound to Viewport.GridSpacing, only ever affects rendering/snap
                              density — see SchematicCanvasRenderer's grid-as-dots note below);
@@ -246,7 +279,12 @@ electrical CAD/
       Services/              AppSettingsStore (M10/ADR-016) — Load/Save a small JSON file at
                              %LOCALAPPDATA%\Ecad\settings.json (mirrors LibraryDatabase's path idiom):
                              LastOpenedProjectPath + WasExplicitlyClosed, read by
-                             MainViewModel.TryAutoReopenLastProject on MainWindow's Loaded event
+                             MainViewModel.TryAutoReopenLastProject on MainWindow's Loaded event;
+                             ADR-021 added WireColorHex (default red, edited via Settings >
+                             Preferences), an in-memory Current cache, and a SettingsChanged event —
+                             the same live-sync-via-event convention as ProjectSession's
+                             PlacementsChanged/etc., letting every open SchematicPageViewModel react
+                             to a changed preference without reopening its page
       Views/                NewProjectDialog, AddPageDialog — plain code-behind modal dialogs
                              PartsLibraryView (M10: extracted from the old PartsLibraryWindow, now a
                              UserControl hosted as a singleton, project-independent tab) — master-detail
@@ -278,6 +316,25 @@ electrical CAD/
                              check on the core number against the cable's other cores
                              BomGroupingDialog (M12/ADR-020) — three radio buttons (Project/Location/
                              Cable assembly) shown by the Reports menu's "BOM / Parts List..." command
+                             SettingsDialog (ADR-021) — app-level Preferences (Settings > Preferences...):
+                             10 preset wire colors with swatches, persisted via AppSettingsStore.Save
+                             (not project data, so not scoped to any one project)
+                             DevicesNavigatorView (ADR-022) — the sidebar's "Devices" tab: a read-only,
+                             3-column (Function/Location/Tag) DataGrid over the same DevicesGridViewModel
+                             the old Grid Editor "Devices" tab used (data/commands unchanged, only the
+                             View is new and trimmed) — double-click resolves+jumps to the device's page
+                             (NavigateToDevice -> GetFirstPlacementForDevice -> the existing
+                             OpenOrFocusPageTab), right-click for Edit Tag.../Delete Selected. Read-only
+                             by design so double-click can only ever mean "jump" — no WPF cell-edit-mode
+                             ambiguity to resolve. A PreviewMouseRightButtonDown handler selects the row
+                             under the cursor first, since WPF's DataGrid doesn't do this on its own
+                             (unlike ListView-driven right-click context menus elsewhere in this app,
+                             this one is new code so it was worth getting right immediately)
+                             EditDeviceTagDialog (ADR-022) — Function/Location/Tag fields, mirrors
+                             EditPageDialog's shape; replaces the old grid's RowEditEnding inline-edit
+                             now that the navigator's grid is read-only. No uniqueness check, same
+                             accepted-simplification precedent DevicesGridViewModel's inline edit
+                             already had
                              ReportPageView (M12/ADR-020) — a much smaller UserControl than
                              SchematicPageView (no canvas, no undo/redo stack): a "Regenerate" button +
                              title/header-field TextBlocks + an ordinary WPF DataGrid bound to
@@ -327,14 +384,17 @@ electrical CAD/
                              GridEditorWindow into a UserControl, hosted as a singleton project-scoped
                              tab found via OpenTabs.FirstOrDefault(t => t.Content is
                              GridEditorViewModel) instead of a dedicated OpenOrFocus registry) — a
-                             TabControl hosting DevicesGridView/ConnectionsGridView/CablesGridView/
-                             TerminationsGridView, each DataContext-bound to its own tab view-model.
-                             First editable (not read-only) DataGrid usage in the app — row edits are
-                             persisted via a RowEditEnding handler that defers to
-                             Dispatcher.BeginInvoke so the grid's own binding commits before the
-                             view-model reads the edited object. Needs none of SchematicPageView's
-                             DataContextChanged/InvalidateVisual workaround — every child control here is
-                             an ordinary WPF-bound DataGrid, not a manually-painted SKElement
+                             TabControl hosting ConnectionsGridView/CablesGridView/TerminationsGridView,
+                             each DataContext-bound to its own tab view-model. Devices moved out
+                             entirely (ADR-022): DevicesGridView/DevicesGridViewModel's old ownership by
+                             GridEditorViewModel is gone, replaced by MainViewModel.DevicesNavigator
+                             (see MainWindow.xaml(.cs) below) — no duplicate access to the same data.
+                             Editable (not read-only) DataGrid usage — row edits are persisted via a
+                             RowEditEnding handler that defers to Dispatcher.BeginInvoke so the grid's
+                             own binding commits before the view-model reads the edited object. Needs
+                             none of SchematicPageView's DataContextChanged/InvalidateVisual workaround
+                             — every child control here is an ordinary WPF-bound DataGrid, not a
+                             manually-painted SKElement
       SymbolLibrary/         8 starter IEC-style symbols: RelayCoil, ContactNO, ContactNC, Terminal,
                              Motor3Phase, PushbuttonNO, Fuse, Lamp — each a plain .svg + .symbol.json
                              sidecar (see ADR-006), Content/CopyToOutputDirectory. InterruptionPoint (M7
@@ -362,20 +422,46 @@ electrical CAD/
                              ConnectionsGridView's CableCoreId column: filters the CableCore list to
                              the row's own CableId, since a plain DataGridComboBoxColumn can't filter
                              its item source per row
-      MainWindow.xaml(.cs)  M10/ADR-016: restructured to a single window — a Pages sidebar ListView
-                             (Function/Location/DocType/PageNumber/Type columns, double-click a row to
-                             open/focus its tab via MainViewModel.OpenPage) beside a document TabControl
-                             bound to OpenTabs/SelectedTab, each tab's Content resolved to its View by
-                             implicit DataTemplates declared in Window.Resources (keyed by
-                             SchematicPageViewModel/GridEditorViewModel/PartsLibraryViewModel/
+                             EnumEqualityConverter (ADR-022) — IsChecked = value.Equals(parameter),
+                             backing the Page Navigator's checkable grouping menu (no built-in WPF
+                             MenuItem radio-group mechanism exists — a GroupName property was assumed
+                             then found not to, caught by the build)
+                             BlankGroupLabelConverter (ADR-022) — null/empty group-header Name ->
+                             "(none)"; safe because Function/Location/DocumentType always normalize
+                             blank input to null, never "" (AddPageDialog), so there's no null-vs-empty
+                             double-bucket risk
+                             BoolToColumnWidthConverter (ADR-022) — collapses the sidebar's
+                             ColumnDefinition to width 0 when its navigator is hidden (binds directly,
+                             no Style/DataTrigger indirection needed)
+      MainWindow.xaml(.cs)  M10/ADR-016: restructured to a single window — originally a Pages sidebar
+                             ListView beside a document TabControl; ADR-022 turned the left column
+                             itself into a TabControl (Grid.Column="0"), so the sidebar can host more
+                             than one navigator without new layout work. "Pages" TabItem: the original
+                             ListView (Function/Location/DocType/Page# columns, double-click a row to
+                             open/focus its tab via MainViewModel.OpenPage), now with a "⚙" settings
+                             button (OnPagesSettingsClick opens its ContextMenu programmatically on
+                             left-click, since it IS the click target) offering No Grouping/Group by
+                             Function/Location/Document Type — PageGroupBy drives an ICollectionView
+                             GroupDescription+SortDescription pair over the same Pages collection
+                             (ApplyPageGrouping in MainViewModel), rendered via a GroupStyle/Expander
+                             ContainerStyle for per-group collapse. "Devices" TabItem (ADR-022): the new
+                             DevicesNavigatorView, DataContext bound to MainViewModel.DevicesNavigator.
+                             Each TabItem's own Visibility (IsPageNavigatorVisible/
+                             IsDevicesNavigatorVisible, via BoolToVisibilityConverter) removes it from
+                             the strip entirely when hidden, toggled from the new _View menu — the
+                             whole-column ColumnDefinition width also collapses to 0
+                             (BoolToColumnWidthConverter) when Pages itself is hidden. The document
+                             TabControl (Grid.Column="2") is unchanged: OpenTabs/SelectedTab, Content
+                             resolved to its View by implicit DataTemplates declared in Window.Resources
+                             (keyed by SchematicPageViewModel/GridEditorViewModel/PartsLibraryViewModel/
                              SymbolBrowserViewModel/ReportPageViewModel — M12/ADR-020); a tab-header
                              DataTemplate adds a "✕" close button bound to CloseTabCommand. File menu
                              (Grid Editor/Parts Library/Symbol Browser no longer have "..." — they open a
-                             tab, not a dialog/window); M12/ADR-020 added a Reports menu (Connection
+                             tab, not a dialog/window); M12/ADR-020's Reports menu (Connection
                              List/BOM.../Cable Overview/Cable Manufacturing Sheets/Regenerate All
-                             Reports — nothing else existed to hook a Reports feature into, since no
-                             Export menu exists yet either, that's M13); status bar; DataContext =
-                             MainViewModel
+                             Reports); _View menu (ADR-022: Page Navigator/Devices Navigator visibility
+                             checkboxes); _Settings menu (ADR-021: Preferences... opens SettingsDialog);
+                             status bar; DataContext = MainViewModel
     Ecad.Core/             domain models & business logic (net8.0, no UI/storage deps)
       Models/              Project, Page, Device, DevicePin, Placement, PlacementPin, Connection, ConnectionEnd,
                             Cable (+ ProjectId, M8), CableCore, Part, PartPinTemplate, PartTerminalSpec, PartAccessory, PartImage,
@@ -427,6 +513,9 @@ electrical CAD/
                                              index on ReportKind/SourceEntityId/GroupingKey, treating
                                              NULLs as a fixed sentinel via IFNULL so the identity lookup
                                              works the same whether or not those columns are set)
+      Migrations/Project/0009_page_navigator_settings.sql   ADR-022: adds Project.PageNavigatorSettingsJson
+                                             (a new column, not a reuse of the still-unbuilt
+                                             PageStructureSettingsJson below — different, unrelated concern)
       MigrationRunner.cs    applies embedded .sql files in order, tracks schema_migrations table
       ProjectDatabase.cs    opens/creates a project's single-file SQLite db, runs Project migrations
       LibraryDatabase.cs    opens/creates %LOCALAPPDATA%\Ecad\library.db, runs Library migrations
@@ -491,12 +580,20 @@ electrical CAD/
                              cleanup for a cable renamed/deleted since the last "Generate All" run),
                              DeletePage (the first general-purpose page deletion — GeneratedReport rows
                              cascade with their Page), the PagesChanged event, and extended DeleteCable
-                             to remove that cable's manufacturing-sheet page too
+                             to remove that cable's manufacturing-sheet page too;
+                             ADR-022 added UpdatePageNavigatorSettings(json) (mutates
+                             CurrentProject.PageNavigatorSettingsJson + delegates to the repository, no
+                             PagesChanged — MainViewModel is the only reader/writer) and
+                             GetFirstPlacementForDevice(deviceId) (thin wrapper over
+                             PlacementRepository's own method below, backs the Devices Navigator's jump)
       PlacementDeletionResult.cs   M6: what DeletePlacement did (whole Device removed, or just the
                              placement) — tells DeleteCommand.Undo() which recreate strategy to use
       Repositories/         ProjectRepository (+ GetFirstProject, GetPages; M12/ADR-020: GetMaxSortOrder,
-                             UpdatePage/DeletePage — the first Page update/delete path in the codebase),
-                             DeviceRepository
+                             UpdatePage/DeletePage — the first Page update/delete path in the codebase;
+                             ADR-022: UpdatePageNavigatorSettings, and the SELECT * ProjectRow record
+                             gained PageNavigatorSettingsJson — required since GetFirstProject/GetProject
+                             materialize via a strict record constructor, same reason every prior new
+                             Project/Page column needed this), DeviceRepository
                              (+ DeleteDevice, UpdateDeviceTag with Function/Location, GetAllDevices,
                              FindByTag, SuggestNextDesignation — M6; UpdateDevicePart, UpdateDevicePin,
                              DeleteDevicePin — M8; GetAllDevicePins(projectId) — M12/ADR-020, project-wide
@@ -504,7 +601,11 @@ electrical CAD/
                              (+ GetOrCreateSymbol, UpdatePosition, UpdateRotation, GetPlacementsForPage,
                              GetSiblingPlacementRefs, GetPlacementPinNames, CountPlacementsForDevice,
                              DeleteExclusiveDevicePinsForPlacement, DeletePlacement — M6; GetPlacementPins
-                             — M7; GetPlacementIdsForDevice — ADR-015, backs DeleteDeviceCascade),
+                             — M7; GetPlacementIdsForDevice — ADR-015, backs DeleteDeviceCascade;
+                             GetFirstPlacementForDevice — ADR-022, the Devices Navigator's jump-to-page
+                             target for a multi-placement device, ordered by Page.SortOrder/Page.Id/
+                             Placement.Id so "first" means earliest page in project order, not creation
+                             order — reuses the existing SiblingPlacementRef shape rather than a new type),
                              ConnectionRepository (M7: DeleteConnection, GetConnectionsForPage,
                              GetConnectionsForDevicePin, AreConnected, UpdateWireNumber — was bare
                              Insert/Get only since M1; M8: GetAllConnectionsForProject,
@@ -581,7 +682,15 @@ electrical CAD/
                              CableLineCrossingRenderInfo (Id/X/Y/RotationDegrees/CableTag/CoreNumber/
                              Color/CrossSectionMm2 — resolved live by the ViewModel each frame via
                              SegmentIntersection, not stored) drawn via the same DrawDefinitionPointGlyph
-                             helper
+                             helper. ADR-021: Render gained an optional wireColor parameter (defaults to
+                             the old hardcoded dark gray if omitted) — DrawWires uses it instead of a
+                             fixed constant, sourced from SchematicPageViewModel.WireColor (reads
+                             AppSettingsStore.Current.WireColorHex live on every paint). Separately: pin
+                             markers, junction dots, the definition-point/cable-crossing tick glyph, and
+                             every text label (device tag, cross-reference, cable-line tag) were found to
+                             be drawn at fixed screen-pixel sizes regardless of Viewport.Zoom, unlike
+                             placements (which already scale via placement.Width * viewport.Zoom) — all
+                             now multiply their radius/length/font-size/offset by viewport.Zoom to match
       Canvas/ConnectionModels.cs       M7: WorldPoint (value-equatable world-space point), PinPosition
                              (DevicePinId + world position + outward Direction), ExistingConnection
                              (endpoints + already-routed path) — shared inputs for the pure classes below
@@ -717,4 +826,6 @@ Whole-solution build verified clean (`dotnet build EcadApp.sln`, 0 errors); 220 
 **M11 (wire & cable definition points) is now also fully complete** — see ADR-018/ADR-019: connection definition points replaced M7's automatic wire numbering with an explicit placement gesture, then went through a genuine root-cause redesign after live testing found moving a connected symbol made a definition point disappear (auto-connect's delete-and-recreate of the underlying `Connection` row was the real cause) — `DefinitionPoint` became a fully independent entity, the same shape `Placement` already used, surviving that churn via a nullable `ConnectionId` with `ON DELETE SET NULL`. Cable definition lines followed the same day, drawing on that just-learned lesson directly (`CableLine`/`CableLineCrossing` built the same way from the start) to resolve ADR-011's long-deferred "revisit once cable-definition-line drawing is built" note — auto-creating cable cores per crossed wire with zero upfront setup, per explicit user request. Both features went through several rounds of live-testing refinement (grid-snap bugs, rotation, red styling, independent crossing selectability) documented in the two ADRs and the 2026-07-11/12 `PROGRESS.md` log entries; every interaction was click-tested live, consistent with this project's established "no UI/canvas-interaction automated tests" pattern.
 **M12 (Reports engine) is now also complete, build/test-verified** — see ADR-020: a report is a `GeneratedReport`-linked `Page` (identity-keyed by `ReportKind`/`SourceEntityId`/`GroupingKey`, so regenerating it reuses the same page rather than duplicating it), populated by one of four pure-data `Ecad.Reports.Builders` and displayed as a plain WPF `DataGrid` — no PDF/rendering engine at all. The first pass built exactly what ADR-001 originally called for (QuestPDF rendering a rasterized preview) and it worked cleanly on the first attempt, but the user reversed that mid-build over QuestPDF's commercial-license cost and a preference for a simple in-app data page over a print-oriented one right now; QuestPDF was removed from `Ecad.Reports` entirely the same day, with the JSON layout schema and all four report Builders surviving untouched (they were always renderer-agnostic). PDF/Excel/CSV export (Section 6.5) stays M13, with the actual export technology now an open, license-aware decision for when that milestone starts rather than one made silently in M12.
 
-This section will be updated with real detail as each milestone lands — next up: M13 (Export: PDF/Excel/CSV) or the user's live-testing feedback on M12, to be decided with the user.
+**Post-M12, pre-M13 (2026-07-16/17): app preferences and the first sidebar navigator, not tied to a milestone number** — see ADR-021/ADR-022. ADR-021 added the first genuine app-preferences feature: `Settings > Preferences...` (`SettingsDialog`) editing a default wire color (`AppSettingsStore.WireColorHex`, default red), which surfaced a real, previously-unnoticed gap — `Connection.Color` had existed in the schema and Grid Editor since M8 but `SchematicCanvasRenderer.DrawWires` never actually read it, always drawing a hardcoded dark gray; scoped deliberately to just the one global default asked for, not full per-connection color rendering. The same investigation found several more canvas elements (pin markers, junction dots, the definition-point/cable-crossing tick glyph, every text label) drawn at fixed screen-pixel sizes regardless of zoom, unlike placements — fixed to scale with `viewport.Zoom` like everything else. ADR-022 built the Page Navigator's sort/group-by-Function/Location/DocumentType (a pure `ICollectionView` transform, no new data structures, persisted per-project in a new `Project.PageNavigatorSettingsJson` column — deliberately not a reuse of the still-unused `PageStructureSettingsJson`, which research found was earmarked for a different, unrelated concern) and the Devices Navigator (the sidebar's left column became a `TabControl` — Pages/Devices, each independently toggleable from a new `_View` menu — with Devices moved entirely out of the Grid Editor to avoid duplication). Building the Devices Navigator surfaced and fixed a second real, previously-unnoticed gap: focusing a placement (`SchematicPageViewModel.FocusPlacement`, used by both the new navigator and the pre-existing Ctrl+Click cross-reference navigation) only ever selected it, never panned the canvas into view — fixed with a pending-center mechanism resolved on the next paint. Both features went through two rounds of `EnterPlanMode` + `AskUserQuestion` clarification before building, consistent with this project's established practice for milestone-shaped work even when it isn't numbered. 229 tests passing total (8 Core + 86 Rendering + 120 Data + 15 Reports, up from 220) — live click-through of all of the above is still pending the user.
+
+This section will be updated with real detail as each milestone lands — next up: M13 (Export: PDF/Excel/CSV), Cables/Connections/Terminals navigators (following the Devices Navigator template — both Connections and Terminations still need new PageId-resolution plumbing first, deliberately deferred), or the user's live-testing feedback on all of the above, to be decided with the user.

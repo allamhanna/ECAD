@@ -12,7 +12,7 @@ public class MigrationTests
         using var connection = ProjectDatabase.Open(file.Path);
 
         var version = connection.QuerySingle<int>("SELECT MAX(version) FROM schema_migrations;");
-        Assert.Equal(8, version);
+        Assert.Equal(9, version);
 
         var tableExists = connection.QuerySingle<int>(
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Connection';");
@@ -91,6 +91,17 @@ public class MigrationTests
     }
 
     [Fact]
+    public void ProjectDatabase_Open_Migration0009_AddsPageNavigatorSettingsJsonColumn()
+    {
+        using var file = new TempSqliteFile();
+        using var connection = ProjectDatabase.Open(file.Path);
+
+        var columnExists = connection.QuerySingle<int>(
+            "SELECT COUNT(*) FROM pragma_table_info('Project') WHERE name = 'PageNavigatorSettingsJson';");
+        Assert.Equal(1, columnExists);
+    }
+
+    [Fact]
     public void LibraryDatabase_Open_AppliesAllMigrations()
     {
         using var file = new TempSqliteFile();
@@ -116,6 +127,6 @@ public class MigrationTests
         using var second = ProjectDatabase.Open(file.Path);
 
         var version = second.QuerySingle<int>("SELECT MAX(version) FROM schema_migrations;");
-        Assert.Equal(8, version);
+        Assert.Equal(9, version);
     }
 }

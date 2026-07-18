@@ -508,3 +508,63 @@ This required the first `Page` update/delete path in the codebase (`ProjectRepos
 - 220 tests passing by the end of this arc (up from 196) — `Ecad.Reports.Tests` (template-loading tolerance, all four Builders' data-assembly logic, the BOM double-counting regression) plus `ProjectSessionGeneratedReportTests` in `Ecad.Data.Tests` (regeneration identity reuse, cable-delete cleanup, orphan batch cleanup). No UI/canvas-interaction automated tests exist for this app (established pattern) — the Reports menu, BOM grouping dialog, and DataGrid rendering are pending a live click-through by the user, the same "I can't drive a rendered WPF window myself" limitation as every other canvas/window milestone.
 
 ---
+
+## ADR-021: App-Level Preferences (Settings > Preferences...) — Default Wire Color
+
+**Status:** Accepted (2026-07-16)
+
+**Context:**
+The user asked for a way to change the connections' color, defaulting to red, under a Settings menu — the first request for a genuine app-level *preference* (as opposed to project content or a per-page display toggle like `GridSpacing`). No Settings/Preferences UI existed anywhere yet; the only precedent for persisted, non-project state was `AppSettingsStore` (M10/ADR-016), until now holding just `LastOpenedProjectPath`/`WasExplicitlyClosed` for auto-reopen.
+
+Investigating the actual wire-rendering code surfaced a real, previously unnoticed gap: `Connection.Color` has existed as a column since M8 (editable in the Grid Editor's Connections tab), but `SchematicCanvasRenderer.DrawWires` never read it at all — every wire on every page always rendered in one hardcoded dark-gray `SKColor` constant, completely independent of that column's value.
+
+**Decision — scope stays to the one thing actually asked for, a single global default, not per-connection color:**
+Wiring up `Connection.Color` to actually drive per-wire rendering would be a materially bigger feature (it would also need to interact with the read-only-once-a-definition-point-is-attached guard `ADR-018` already put on that same column in the Grid Editor) and wasn't what was requested. Instead: `AppSettingsStore.AppSettings` gained `WireColorHex` (default `"#FF0000"`), and `SchematicCanvasRenderer.Render` gained an optional `wireColor` parameter (default: the old hardcoded gray, so every existing call site/test is unaffected if it doesn't pass one) — `DrawWires` uses whichever color it's given instead of a fixed constant.
+
+**Decision — settings changes propagate live via the same event convention `ProjectSession` already established:**
+`AppSettingsStore` gained an in-memory `Current` cache and a `SettingsChanged` event, fired from `Save`. Every open `SchematicPageViewModel` subscribes and raises `RedrawRequested` on change — the exact same "something changed, tell every open subscriber" shape `PlacementsChanged`/`ConnectionsChanged`/etc. already use for cross-window live sync, just for an app-level setting instead of project data. `SchematicPageViewModel.WireColor` re-resolves `AppSettingsStore.Current.WireColorHex` (parsed via `SKColor.Parse`, wrapped in a try/catch falling back to red on a malformed hex string) fresh on every paint rather than caching it, so a change in the Settings dialog is visible on the very next repaint with no need to reopen any page.
+
+**Decision — the dialog itself is a plain code-behind Window, matching every other dialog in this app:**
+`SettingsDialog` (`Settings > Preferences...`) offers 10 preset colors with swatches (a `ListBox` of `ListBoxItem`s tagged with hex values) rather than a full custom color picker — proportionate to "one setting exists today," and easy to extend with more preset rows or additional settings later without new infrastructure.
+
+**Consequences:**
+- No schema/migration change — this is app-level state (`%LOCALAPPDATA%\Ecad\settings.json`), not project data.
+- Investigating the same rendering code found several more canvas elements drawn at fixed screen-pixel sizes regardless of `viewport.Zoom` (pin markers, junction dots, the definition-point/cable-crossing tick glyph, every text label) — fixed the same day by scaling each by `viewport.Zoom`, matching how placements already scale. Reported and fixed as a direct follow-up in the same session, not folded silently into this ADR's own scope.
+- Explicitly out of scope: per-connection custom color (the `Connection.Color` column stays exactly as unused-by-rendering as before — only now there's a documented reason why); a full custom color picker (hex entry, RGB sliders) instead of presets.
+- 226 tests passing (unchanged by this feature — App/Rendering-parameter-only change, no new automated UI tests, consistent with this project's established convention). Live click-through of the Settings dialog and the zoom-scaling fix is pending the user.
+
+---
+
+## ADR-022: Page Navigator Sort/Group + the Devices Navigator (Sidebar Tab Strip)
+
+**Status:** Accepted (2026-07-17)
+
+**Context:**
+The user asked for the Page Navigator to support sorting/grouping pages by Function/Location/Document Type, with "structural pages" as part of that — plus flagged a longer-term plan: dedicated navigators for Devices/Cables/Connections/Terminals, each toggleable from a View menu. Given the size and multiple genuine design forks, both pieces were planned via `EnterPlanMode` with `AskUserQuestion` clarifications rather than guessed at.
+
+**Decision — "structural pages" are automatic grouping headers, not a new kind of page:**
+Clarified directly with the user rather than assumed: no new `PageType`, no new page entity — grouping is a pure `ICollectionView` transform (`PropertyGroupDescription` + a matching `SortDescription`, so groups sort alphabetically rather than by first-seen order) over the exact same `Pages` `ObservableCollection` already bound to the sidebar, rendered via a `GroupStyle`/`Expander` `ContainerStyle` for per-group collapse. No new data structures were needed at all. Blank Function/Location/DocumentType values always normalize to `null`, never `""` (`AddPageDialog`), so a small `BlankGroupLabelConverter` safely shows "(none)" with no null-vs-empty-string double-bucket risk.
+
+**Decision — a new `Project.PageNavigatorSettingsJson` column, not a reuse of the existing unused one:**
+`Project.PageStructureSettingsJson` has existed since M1 but was never read or written anywhere — a natural-seeming place to persist the chosen grouping (per-project, confirmed with the user, since different projects may want a different default view). Reading its own doc comment first, though, showed it's earmarked for a *different*, still-unbuilt concern entirely (which IEC 81346 tag segments a project uses). Overloading it with an unrelated meaning would have created a real landmine for whenever that original concern actually gets built. A new, correctly-named column was added instead (migration `0009`) — matching this codebase's established pattern of one purpose-built column per concern rather than a loosely-named shared blob.
+
+**Decision — Devices moves out of the Grid Editor entirely into a sidebar "Devices" tab, per explicit direction:**
+The sidebar's left column (previously just the Pages `ListView`) became a `TabControl` — "Pages" and "Devices" today, with each `TabItem`'s own `Visibility` (bound to `IsPageNavigatorVisible`/new `IsDevicesNavigatorVisible`) removing it from the strip entirely when hidden via a new `_View` menu, not merely hiding it in place. `DevicesGridViewModel` itself is reused completely unchanged (same `DeviceRow`, same commands) — only its View changed, and only its *owner* changed (`MainViewModel.DevicesNavigator` instead of `GridEditorViewModel.DevicesTab`), confirmed explicitly rather than assumed, since duplicating the same data in two places was the alternative.
+
+**Decision — the navigator's grid is read-only; editing goes through an explicit dialog, not inline cell-editing:**
+The old Grid Editor `DevicesGridView` supported inline text editing via `RowEditEnding`. Trimming that same grid for the sidebar's ~260px width while *also* wanting double-click to mean "jump to this device's page" created a real, concrete risk: WPF's `DataGrid` can treat a double-click as "enter cell edit," which would fight with double-click-to-jump. Rather than gamble on that interaction working out, the navigator's grid was made read-only outright (`IsReadOnly="True"`) — double-click can then only ever mean "jump" — and editing (`EditDeviceTagDialog`, mirroring `EditPageDialog`'s shape) moved to an explicit right-click action, the same interaction model the Pages sidebar itself already uses (`RenameSelectedPage`/`EditPageDialog`). A second, less obvious gotcha was caught the same way: WPF's `DataGrid` doesn't select a row on right-click by default, so without a `PreviewMouseRightButtonDown` handler selecting the row under the cursor first, "Edit Tag..."/"Delete Selected" would have silently acted on whatever was selected *before* the right-click.
+
+**Decision — jumping to a device resolves through a new lookup, reusing the existing sibling-navigation entry point:**
+A Device has no `PageId` of its own — it's derived from its (possibly several) Placements. `PlacementRepository.GetFirstPlacementForDevice` resolves to the placement on the *earliest page in the project's own order* (`Page.SortOrder, Page.Id, Placement.Id` — not creation order), reusing the existing `SiblingPlacementRef(PlacementId, PageId, PageLabel)` shape rather than inventing a new type, since it's exactly that data already. `DevicesGridViewModel` gained a `NavigateToPageRequested` event, identical in shape to `SchematicPageViewModel`'s own, wired by `MainViewModel` straight into the already-public `OpenOrFocusPageTab` — the same single entry point Ctrl+Click cross-reference navigation already uses. A multi-placement device's other placements stay reachable from there via that existing cross-reference navigation, unchanged.
+
+**Decision — fix the real "focus doesn't bring anything into view" gap this surfaced, for every focus call site at once:**
+Researching the jump mechanism found that focusing a placement (`SchematicPageViewModel.FocusPlacement`, and the constructor's initial `focusPlacementId` — used by Ctrl+Click cross-reference navigation since M7, now also by the Devices Navigator) only ever *selected* it, never panned the canvas — a target outside the current viewport looked exactly like nothing had happened. `CanvasViewport` has no stored surface pixel size (only `SchematicPageView`'s `OnPaintSurface` sees that, once per frame), so centering can't be computed the moment focus is requested — a `_pendingCenterPlacementId` field is stashed instead and resolved by a new `ApplyPendingCenter(surfaceWidth, surfaceHeight)`, called from `OnPaintSurface` right before `Render` once the surface size is actually known. Pans only (`Viewport.PanX/PanY`), zoom untouched, centered on the placement's stored `X/Y` (its un-rotated anchor corner, not its true visual center — picture bounds aren't stored per-placement, an accepted small imprecision). This fixes every existing focus call site at once, not just the new navigator's.
+
+**Consequences:**
+- Migration `0009` adds `Project.PageNavigatorSettingsJson`.
+- `GridEditorViewModel`/`GridEditorView` lose the Devices tab entirely; the old `DevicesGridView.xaml`/`.xaml.cs` are deleted outright (fully superseded, matching this codebase's established "delete what's actually unused" convention — same treatment `WireNumberDialog` and the old `DeviceTagDialog` rename-mode constructor already got).
+- `IsPageNavigatorVisible`/`IsDevicesNavigatorVisible` are in-memory only, not persisted — a deliberate, called-out scope cut (not asked for) rather than a silent gap; the same cut already accepted for `IsPageNavigatorVisible` itself.
+- Explicitly deferred: Cables/Connections/Terminals navigators (the stated longer-term plan) — both `Connection` and `ConnectionEnd`/termination rows carry no `PageId` at all today, so each needs its own version of the `GetFirstPlacementForDevice`-style plumbing this ADR built for Devices, not a trivial copy-paste.
+- 229 tests passing by the end of this arc (up from 220) — a `MigrationTests` column-existence check, a `ProjectSessionPageManagementTests` settings round-trip, and a `GetFirstPlacementForDevice` test proving the lookup follows page order rather than creation order. No new UI-layer automated tests (established pattern) — live click-through of grouping, the gear menu, the View menu, and the jump-and-center behavior is pending the user.
+
+---

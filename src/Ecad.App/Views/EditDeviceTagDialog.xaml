@@ -1,0 +1,36 @@
+<Window x:Class="Ecad.App.Views.EditDeviceTagDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit Device Tag" Height="220" Width="360"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="100"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Text="Function (=)" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,4"/>
+        <TextBox x:Name="FunctionBox" Grid.Row="0" Grid.Column="1" Margin="0,4"/>
+
+        <TextBlock Text="Location (+)" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,4"/>
+        <TextBox x:Name="LocationBox" Grid.Row="1" Grid.Column="1" Margin="0,4"/>
+
+        <TextBlock Text="Tag (-)*" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="0,4"/>
+        <TextBox x:Name="TagBox" Grid.Row="2" Grid.Column="1" Margin="0,4"/>
+
+        <TextBlock x:Name="ValidationText" Foreground="Red" Grid.Row="3" Grid.ColumnSpan="2"
+                   VerticalAlignment="Top" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="4" Grid.ColumnSpan="2" Margin="0,8,0,0">
+            <Button Content="OK" Width="80" Margin="0,0,8,0" Click="OnOkClick" IsDefault="True"/>
+            <Button Content="Cancel" Width="80" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>
