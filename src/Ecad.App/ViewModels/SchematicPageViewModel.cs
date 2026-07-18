@@ -215,7 +215,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     /// PlacementId. SchematicPageWindow handles this by opening that page with the placement selected.</summary>
     public event Action<long, long>? NavigateToPageRequested;
 
-    public SchematicPageViewModel(ProjectSession session, Page page, long? focusPlacementId = null)
+    public SchematicPageViewModel(ProjectSession session, Page page, long? focusPlacementId = null, long? focusDefinitionPointId = null)
     {
         _session = session;
         _page = page;
@@ -296,10 +296,16 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             CableLines.Add(cableLineItem);
         }
 
-        if (focusPlacementId is { } id && Placements.Any(p => p.PlacementId == id))
+        if (focusDefinitionPointId is { } definitionPointId && DefinitionPoints.FirstOrDefault(p => p.Id == definitionPointId) is { } definitionPoint)
+        {
+            SelectedDefinitionPointIds.Clear();
+            SelectedDefinitionPointIds.Add(definitionPointId);
+            _pendingCenterWorldPoint = (definitionPoint.X, definitionPoint.Y);
+        }
+        else if (focusPlacementId is { } id && Placements.FirstOrDefault(p => p.PlacementId == id) is { } placement)
         {
             SelectedPlacementId = id;
-            _pendingCenterPlacementId = id;
+            _pendingCenterWorldPoint = (placement.X, placement.Y);
         }
     }
 
@@ -1901,32 +1907,44 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     /// brought to front by navigation instead of a new one being constructed with focusPlacementId.</summary>
     internal void FocusPlacement(long placementId)
     {
-        if (!Placements.Any(p => p.PlacementId == placementId)) return;
+        var placement = Placements.FirstOrDefault(p => p.PlacementId == placementId);
+        if (placement is null) return;
         SelectedPlacementId = placementId;
-        _pendingCenterPlacementId = placementId;
+        _pendingCenterWorldPoint = (placement.X, placement.Y);
         RedrawRequested?.Invoke();
     }
 
-    /// <summary>A focus request (FocusPlacement, or the ctor's initial focusPlacementId) can't center
-    /// the viewport immediately — CanvasViewport has no stored surface pixel size, only the View's
-    /// OnPaintSurface sees that, once per frame. Stashed here and resolved by ApplyPendingCenter on
-    /// the next paint, once the surface size is actually known.</summary>
-    private long? _pendingCenterPlacementId;
+    /// <summary>Selects a definition point already on this page and centers on it — the Connections
+    /// Navigator prefers this over FocusPlacement when a connection has one, since the definition
+    /// point (the wire's actual number/color marker) is more meaningful to land on than a bare
+    /// endpoint placement.</summary>
+    internal void FocusDefinitionPoint(long definitionPointId)
+    {
+        var point = DefinitionPoints.FirstOrDefault(p => p.Id == definitionPointId);
+        if (point is null) return;
+        SelectedDefinitionPointIds.Clear();
+        SelectedDefinitionPointIds.Add(definitionPointId);
+        _pendingCenterWorldPoint = (point.X, point.Y);
+        RedrawRequested?.Invoke();
+    }
+
+    /// <summary>A focus request can't center the viewport immediately — CanvasViewport has no stored
+    /// surface pixel size, only the View's OnPaintSurface sees that, once per frame. The target world
+    /// point is resolved at the focus call site (a placement's or a definition point's own X/Y) and
+    /// stashed here, resolved by ApplyPendingCenter on the next paint once the surface size is known.</summary>
+    private (double X, double Y)? _pendingCenterWorldPoint;
 
     /// <summary>Called by SchematicPageView.xaml.cs right before each Render — pans (never zooms) so a
-    /// just-focused placement sits at the center of the current view. Centers on the placement's
-    /// stored X/Y (its un-rotated anchor corner, not its true visual center — picture bounds aren't
+    /// just-focused placement/definition point sits at the center of the current view. A placement's
+    /// stored X/Y is its un-rotated anchor corner, not its true visual center (picture bounds aren't
     /// stored per-placement); close enough to bring it into view, not meant to be pixel-exact.</summary>
     internal void ApplyPendingCenter(double surfaceWidth, double surfaceHeight)
     {
-        if (_pendingCenterPlacementId is not { } id) return;
-        _pendingCenterPlacementId = null;
+        if (_pendingCenterWorldPoint is not { } point) return;
+        _pendingCenterWorldPoint = null;
 
-        var placement = Placements.FirstOrDefault(p => p.PlacementId == id);
-        if (placement is null) return;
-
-        Viewport.PanX = surfaceWidth / (2 * Viewport.Zoom) - placement.X;
-        Viewport.PanY = surfaceHeight / (2 * Viewport.Zoom) - placement.Y;
+        Viewport.PanX = surfaceWidth / (2 * Viewport.Zoom) - point.X;
+        Viewport.PanY = surfaceHeight / (2 * Viewport.Zoom) - point.Y;
     }
 
     internal void UpdatePlacementPosition(long placementId, double x, double y)

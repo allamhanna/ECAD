@@ -612,3 +612,59 @@ Every existing `DevicesGridViewModel` behavior (Edit Tag, bulk Part-assign, casc
 - Explicitly out of scope: a dedicated "jump to the paired other end" action for Interruption Points specifically — Ctrl+Click cross-reference navigation (already generic, Device-based) already provides this once you're looking at any one placement, so the navigator only needed to list the right *set* of Devices, not reinvent sibling navigation.
 
 ---
+
+## ADR-025: Connections Navigator — Editing Moves to a Dialog, Jump Prefers the DefinitionPoint
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+Fourth navigator in the sidebar roadmap (Terminals last, deliberately hardest). Confirmed with the user: Connections leaves the Grid Editor entirely too, matching Devices/Cables — even though it has more real editing chrome (from/to pin rewiring, cable/core assignment via live comboboxes) than Cables' master-detail did. Also confirmed: double-click should prefer selecting+centering a connection's `DefinitionPoint` (its actual wire-number/color marker) when it has one, falling back to an endpoint placement otherwise — reusing `SelectedDefinitionPointIds`, which already exists as the selection mechanism, rather than inventing a new one.
+
+One genuine simplification versus Cables: a Connection is only ever created between two already-placed pins, so it always resolves to exactly one page (ADR-009 — both ends land on the same page) — no "not wired yet" fallback state to handle.
+
+**Decision — reuse `ConnectionsGridViewModel`'s data layer entirely unchanged:**
+`AllDevicePins`, `AllCables`, `CoresByCableId`, the `ConnectionIdsWithDefinitionPoint`/`ConnectionIdsWithCableLineCrossing` "set via canvas" guards, and the bulk-set color/cross-section commands all carried straight into both the new navigator and the new `EditConnectionDialog` with zero changes. Only the *View* changed. From/To pin labels ("Tag — PinName", needed for the read-only grid instead of raw `DevicePinId` longs) resolve via a new `DevicePinLabelConverter` — a `MultiBinding` lookup against the existing `AllDevicePins` list, the same shape `CableCoreOptionsConverter` already established — rather than introducing a parallel flattened row DTO the way `DeviceRow` exists for Devices; the raw `Connection` model stayed exactly as the bound collection.
+
+**Decision — editing moves to `EditConnectionDialog`, guarded fields disabled rather than silently reverted:**
+The old grid's inline comboboxes (rewire From/To pins, assign Cable/Core) and text columns (Color, Cross-section, Length) all move into one dialog. Its guard behavior is stricter than before: `CommitConnectionEdit`'s existing skip-and-revert logic (color/cross-section skipped when a `DefinitionPoint` is attached; cable/core skipped when crossed by a `CableLine`) stays as the ultimate safety net, but the dialog itself now disables those specific fields up front by checking the same two `HashSet`s — the user sees *why* a field can't be touched instead of typing into it and having the edit silently discarded.
+
+**Decision — jump resolution needed a new repository method, keyed on one connection rather than "first among several":**
+New `ConnectionRepository.GetConnectionPage(connectionId)` mirrors `GetFirstConnectionPageForCable`'s join shape (`Connection → PlacementPin → Placement → Page`) but drops the `ORDER BY`/`LIMIT` entirely — a single connection has exactly one page/endpoint pair, never several to pick a "first" from. `ProjectSession.GetDefinitionPointForConnection` wraps the already-existing `DefinitionPointRepository.GetByConnectionId`. `ConnectionsGridViewModel.NavigateToConnection` resolves the page unconditionally, then checks for a definition point — `NavigateToPageRequested` carries `(pageId, placementId, definitionPointId?)`, one value more than Devices'/Cables' two-value shape, since this is the first navigator with an optional secondary focus target.
+
+**Decision — generalize the pending-center mechanism rather than bolt on a parallel one:**
+`SchematicPageViewModel._pendingCenterPlacementId` (a placement id, re-resolved against `Placements` inside `ApplyPendingCenter`) became `_pendingCenterWorldPoint : (double X, double Y)?`, computed once at the focus call site instead. A new `FocusDefinitionPoint(id)` sits alongside `FocusPlacement`, pulling its point from `DefinitionPointViewItem`'s own `X`/`Y`. `MainViewModel.OpenOrFocusPageTab` gained a third optional `focusDefinitionPointId` parameter (preferred over `focusPlacementId` when both branches of a tab-focus decision have something to act on) — backward compatible, since every existing call site (Ctrl+Click, Devices, Cables) already passes exactly two positional arguments.
+
+**Decision — fix `Connection.LengthMm`'s persistence gap while already touching this code:**
+Found, not introduced: `LengthMm` was only ever written at `InsertConnection` time — no `UPDATE` path existed anywhere in `ConnectionRepository`, so the old grid's editable, two-way-bound "Length (mm)" column silently reverted on every `Refresh()`. Added `UpdateConnectionLength` + a `ProjectSession` wrapper, wired into `CommitConnectionEdit` alongside the fields that already persisted correctly, with a regression test — the same "note real gaps, fix them when the cost is low" pattern this session already applied to wire-color rendering (ADR-021) and focus-never-centers (ADR-022).
+
+**Consequences:**
+- `GridEditorViewModel`/`GridEditorView` lose the Connections tab; the Grid Editor is now a single-tab Terminations-only shell — an honest, visible intermediate state, not a silent oddity, until the Terminals navigator (last, hardest — `ConnectionEnd` adds its own layer) follows the same pattern. Old `ConnectionsGridView.xaml(.cs)` deleted outright.
+- Sidebar tab strip is now Pages/Devices/Cables/Interruption Points/Connections, each independently toggleable from the `View` menu.
+- 3 new tests (`GetConnectionPage` round-trip, `GetDefinitionPointForConnection` attached-vs-bare, `UpdateConnectionLength` persistence regression) — 235 tests passing (up from 232).
+
+---
+
+## ADR-026: Terminals Navigator — the Last One, and the Grid Editor's Fate
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+Fifth and last navigator, completing the sidebar rollout the user originally asked for (Devices, Cables, Connections, Terminals — Interruption Points was a bonus split found along the way, ADR-024). A Termination is one row of `ConnectionEnd`; the existing flattened `TerminationRow` (`TerminationsGridViewModel`, M9) already carries `ConnectionId`, `EndPointLabel`, and `OtherEndPointLabel` — meaning jump-to-page needed **zero new repository or session methods**, reusing `ProjectSession.GetConnectionPage`/`GetDefinitionPointForConnection` (ADR-025) verbatim. The easiest of the five to build on the backend, by a wide margin.
+
+Moving Terminations out left a real, visible question: the Grid Editor (`GridEditorViewModel`/`GridEditorView`, `File > Grid Editor`) would have zero tabs, since Devices/Cables/Connections had each already moved to their own sidebar navigator (ADR-022/023/025). Asked the user directly rather than assuming either way.
+
+**Decision — keep filters and bulk-assign, they're the point of this tab, not overflow:**
+Unlike Cables' dropped Length/EndTypeClassification (just extra display fields nobody asked to keep), M9 built the Terminations tab specifically as "a filterable/bulk-assign view" (REQUIREMENTS 6.3's own example: "all 0.5mm² ends with termination=ferrule and no part assigned → bulk-assign part"). Dropping the filters here would gut the feature's actual reason for existing. Both the filter row and the bulk-assign-Part row carry over unchanged, just restacked vertically for the sidebar's width — the same "stack, don't cram" adjustment every prior navigator's header needed.
+
+**Decision — the three per-row-editable fields still move into a dialog:**
+`TerminationEnabled`/`TerminationType`/`StrippingLengthMm` were inline-editable (checkbox/combo/textbox cell edit) in the old grid — the same double-click-vs-cell-edit conflict every prior navigator sidestepped by going read-only applies here too, so a new `EditTerminationDialog` replaces the inline edit, calling the existing `CommitTerminationEdit` unchanged. `TerminationPartId` stays bulk-assign-only (ADR-012), untouched — not exposed in the dialog at all.
+
+**Decision — the Grid Editor stays as a deliberate empty shell, not retired:**
+Asked directly: retire `File > Grid Editor` entirely (an empty window serves no purpose), or keep it in place. The user chose to keep it — in case something else lands there later — so `GridEditorViewModel` is now a genuinely empty class (constructor/`Dispose` only, `session` parameter unused but kept for the existing `OpenGridEditorCommand` call site's signature) and `GridEditorView.xaml` shows a small explanatory message ("Devices, Cables, Connections, and Terminations each moved to their own sidebar navigator") rather than a blank window — an honest, explained state rather than a silent mystery if the user (or a future session) opens it expecting content.
+
+**Consequences:**
+- No schema change, no new repository/session methods, no new tests — this navigator is pure UI-layer glue over already-tested plumbing (`GetConnectionPage`/`GetDefinitionPointForConnection` were already covered by ADR-025's tests). 235 tests passing, unchanged by this ADR.
+- Sidebar tab strip is now Pages/Devices/Cables/Interruption Points/Connections/Terminals — six navigators, each independently toggleable from the `View` menu. Old `TerminationsGridView.xaml(.cs)` deleted, same treatment every prior navigator's superseded Grid Editor tab got.
+- This completes the originally-requested navigator set. Any future navigator (there is no next one currently planned) would follow the exact same shape: reuse the existing Grid-tab ViewModel unchanged in its data layer, read-only grid + double-click-to-jump + Edit dialog for anything that was inline-editable, `PreviewMouseRightButtonDown` row-select fix, a `View`-menu visibility checkbox.
+
+---

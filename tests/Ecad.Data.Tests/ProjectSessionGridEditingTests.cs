@@ -267,6 +267,24 @@ public class ProjectSessionGridEditingTests
     }
 
     [Fact]
+    public void UpdateConnectionLength_Persists()
+    {
+        // Regression test for a real gap found while building the Connections Navigator: LengthMm
+        // was only ever written at InsertConnection time — no UPDATE path existed anywhere, so the
+        // old Grid Editor's editable "Length (mm)" column silently reverted on the next Refresh().
+        using var file = new TempSqliteFile();
+        using var session = NewSession(file);
+        var page = session.AddPage(new Page { PageNumberSegment = "1" });
+        var a = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 0, 0, null, null, "X1");
+        var b = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 40, 0, null, null, "X2");
+        var connection = session.CreateConnection(session.GetDevicePins(a.DeviceId).Single().Id, session.GetDevicePins(b.DeviceId).Single().Id);
+
+        session.UpdateConnectionLength(connection.Id, 250.5);
+
+        Assert.Equal(250.5, session.GetAllConnections().Single(c => c.Id == connection.Id).LengthMm);
+    }
+
+    [Fact]
     public void BulkUpdateConnectionColor_AppliesToAllSelected_RaisesConnectionsChangedOnce()
     {
         using var file = new TempSqliteFile();

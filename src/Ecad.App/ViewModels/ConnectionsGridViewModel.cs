@@ -49,6 +49,12 @@ public sealed partial class ConnectionsGridViewModel : ObservableObject
     [ObservableProperty]
     private double? _bulkCrossSectionMm2;
 
+    /// <summary>Raised by NavigateToConnection (the Connections Navigator's double-click action) —
+    /// carries (PageId, PlacementId, DefinitionPointId?): unlike Devices/Cables this navigator has an
+    /// optional third focus target, since a connection's own DefinitionPoint (its wire-number/color
+    /// marker, when attached) is more meaningful to land on than a bare endpoint placement.</summary>
+    public event Action<long, long, long?>? NavigateToPageRequested;
+
     public ConnectionsGridViewModel(ProjectSession session)
     {
         _session = session;
@@ -127,6 +133,7 @@ public sealed partial class ConnectionsGridViewModel : ObservableObject
     public void CommitConnectionEdit(Connection connection)
     {
         _session.UpdateConnectionEndpoints(connection.Id, connection.FromDevicePinId, connection.ToDevicePinId);
+        _session.UpdateConnectionLength(connection.Id, connection.LengthMm);
 
         var needsRefresh = false;
 
@@ -150,5 +157,17 @@ public sealed partial class ConnectionsGridViewModel : ObservableObject
         }
 
         if (needsRefresh) Refresh();
+    }
+
+    /// <summary>A Connection always resolves to exactly one page (ADR-009 — unlike a Cable, it's only
+    /// ever created between two already-placed pins, never left unwired). Prefers the connection's own
+    /// DefinitionPoint as the focus target when one is attached.</summary>
+    public void NavigateToConnection(Connection connection)
+    {
+        var target = _session.GetConnectionPage(connection.Id);
+        if (target is null) return;
+
+        var definitionPoint = _session.GetDefinitionPointForConnection(connection.Id);
+        NavigateToPageRequested?.Invoke(target.PageId, target.PlacementId, definitionPoint?.Id);
     }
 }

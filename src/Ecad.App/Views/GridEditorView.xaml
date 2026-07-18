@@ -1,13 +1,11 @@
 <UserControl x:Class="Ecad.App.Views.GridEditorView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:Ecad.App.Views">
-    <TabControl Margin="4">
-        <TabItem Header="Connections">
-            <local:ConnectionsGridView DataContext="{Binding ConnectionsTab}"/>
-        </TabItem>
-        <TabItem Header="Terminations">
-            <local:TerminationsGridView DataContext="{Binding TerminationsTab}"/>
-        </TabItem>
-    </TabControl>
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- Deliberately empty — Devices/Cables/Connections/Terminations have all moved to the sidebar's
+         own navigators (see GridEditorViewModel). Kept as a shell per explicit user direction rather
+         than removing File > Grid Editor outright, in case something else lands here later. -->
+    <Grid>
+        <TextBlock Text="Nothing here yet — Devices, Cables, Connections, and Terminations each moved to their own sidebar navigator."
+                   HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="Gray" Margin="24" TextWrapping="Wrap"/>
+    </Grid>
 </UserControl>

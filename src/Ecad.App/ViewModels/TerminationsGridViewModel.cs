@@ -70,6 +70,11 @@ public sealed partial class TerminationsGridViewModel : ObservableObject, IDispo
     [ObservableProperty]
     private Part? _bulkAssignPart;
 
+    /// <summary>Raised by NavigateToTermination (the Terminals Navigator's double-click action) —
+    /// same (PageId, PlacementId, DefinitionPointId?) shape ConnectionsGridViewModel's own event
+    /// uses, since a Termination is just one end of a Connection and resolves the same way.</summary>
+    public event Action<long, long, long?>? NavigateToPageRequested;
+
     public TerminationsGridViewModel(ProjectSession session)
     {
         _session = session;
@@ -175,6 +180,17 @@ public sealed partial class TerminationsGridViewModel : ObservableObject, IDispo
     /// same split as Device.PartId since ADR-012).</summary>
     public void CommitTerminationEdit(TerminationRow row) =>
         _session.UpdateConnectionEndTermination(row.ConnectionEndId, row.TerminationEnabled, row.TerminationType, row.TerminationPartId, row.StrippingLengthMm);
+
+    /// <summary>A Termination is just one end of a Connection, so it resolves exactly the same way —
+    /// always exactly one page (ADR-009), preferring the connection's DefinitionPoint when attached.</summary>
+    public void NavigateToTermination(TerminationRow row)
+    {
+        var target = _session.GetConnectionPage(row.ConnectionId);
+        if (target is null) return;
+
+        var definitionPoint = _session.GetDefinitionPointForConnection(row.ConnectionId);
+        NavigateToPageRequested?.Invoke(target.PageId, target.PlacementId, definitionPoint?.Id);
+    }
 
     public void Dispose() => _libraryConnection.Dispose();
 }

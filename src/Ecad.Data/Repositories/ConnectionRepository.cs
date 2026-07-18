@@ -84,6 +84,15 @@ public class ConnectionRepository(SqliteConnection connection)
         connection.Execute("UPDATE Connection SET CrossSectionMm2 = @crossSectionMm2 WHERE Id = @connectionId;", new { connectionId, crossSectionMm2 });
     }
 
+    /// <summary>A genuine pre-existing gap found while building the Connections Navigator's Edit
+    /// dialog: LengthMm was only ever written at InsertConnection time — the old Grid Editor's
+    /// "Length (mm)" column was bound and editable, but no UPDATE path existed anywhere, so an edit
+    /// silently reverted on the next Refresh(). Fixed here rather than carried forward.</summary>
+    public void UpdateConnectionLength(long connectionId, double? lengthMm)
+    {
+        connection.Execute("UPDATE Connection SET LengthMm = @lengthMm WHERE Id = @connectionId;", new { connectionId, lengthMm });
+    }
+
     public void UpdateConnectionCable(long connectionId, long? cableId, long? cableCoreId)
     {
         connection.Execute("UPDATE Connection SET CableId = @cableId, CableCoreId = @cableCoreId WHERE Id = @connectionId;", new { connectionId, cableId, cableCoreId });
@@ -134,6 +143,26 @@ public class ConnectionRepository(SqliteConnection connection)
         public long PlacementId { get; set; }
         public long PageId { get; set; }
         public string? PageNumberSegment { get; set; }
+    }
+
+    /// <summary>The Connections Navigator's "jump to page" target — unlike a Cable, a Connection is
+    /// only ever created between two already-placed pins, so it always resolves to exactly one page
+    /// (both ends resolve to the same page, ADR-009 — no "first among several" ordering needed, this
+    /// is keyed directly on Connection.Id rather than a Cable's possibly-many Connections).</summary>
+    public SiblingPlacementRef? GetConnectionPage(long connectionId)
+    {
+        var row = connection.QuerySingleOrDefault<ConnectionPageRow>(
+            """
+            SELECT pp.PlacementId AS PlacementId, p.PageId, pg.PageNumberSegment
+            FROM Connection c
+            JOIN PlacementPin pp ON pp.DevicePinId = c.FromDevicePinId
+            JOIN Placement p ON p.Id = pp.PlacementId
+            JOIN Page pg ON pg.Id = p.PageId
+            WHERE c.Id = @connectionId;
+            """,
+            new { connectionId });
+
+        return row is null ? null : new SiblingPlacementRef(row.PlacementId, row.PageId, row.PageNumberSegment ?? $"#{row.PageId}");
     }
 
     /// <summary>M8: run before deleting a CableCore, so any Connection assigned to that core is

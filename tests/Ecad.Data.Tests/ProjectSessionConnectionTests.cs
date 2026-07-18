@@ -62,6 +62,47 @@ public class ProjectSessionConnectionTests
     }
 
     [Fact]
+    public void GetConnectionPage_ResolvesPageAndOneEndpointPlacement()
+    {
+        using var file = new TempSqliteFile();
+        using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
+        var page = session.AddPage(new Page { PageNumberSegment = "1" });
+        var a = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 0, 0, null, null, "X1");
+        var b = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 40, 0, null, null, "X2");
+        var aPin = session.GetDevicePins(a.DeviceId).Single();
+        var bPin = session.GetDevicePins(b.DeviceId).Single();
+        var connection = session.CreateConnection(aPin.Id, bPin.Id);
+
+        var target = session.GetConnectionPage(connection.Id);
+
+        Assert.NotNull(target);
+        Assert.Equal(page.Id, target!.PageId);
+        Assert.Equal(a.Id, target.PlacementId);
+    }
+
+    [Fact]
+    public void GetDefinitionPointForConnection_ReturnsAttachedPoint_NullWhenBare()
+    {
+        using var file = new TempSqliteFile();
+        using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
+        var page = session.AddPage(new Page { PageNumberSegment = "1" });
+        var a = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 0, 0, null, null, "X1");
+        var b = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 40, 0, null, null, "X2");
+        var c = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 80, 0, null, null, "X3");
+        var d = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 120, 0, null, null, "X4");
+        var aPin = session.GetDevicePins(a.DeviceId).Single();
+        var bPin = session.GetDevicePins(b.DeviceId).Single();
+        var cPin = session.GetDevicePins(c.DeviceId).Single();
+        var dPin = session.GetDevicePins(d.DeviceId).Single();
+        var withPoint = session.CreateConnection(aPin.Id, bPin.Id);
+        var bare = session.CreateConnection(cPin.Id, dPin.Id);
+        var point = session.PlaceDefinitionPoint(page.Id, 20, 0, "1", "red", 1.5, withPoint.Id);
+
+        Assert.Equal(point.Id, session.GetDefinitionPointForConnection(withPoint.Id)!.Id);
+        Assert.Null(session.GetDefinitionPointForConnection(bare.Id));
+    }
+
+    [Fact]
     public void PlaceDefinitionPoint_AttachedToConnection_SetsAllFields_AndMirrorsOntoTheConnection()
     {
         using var file = new TempSqliteFile();

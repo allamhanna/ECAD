@@ -1,0 +1,61 @@
+<UserControl x:Class="Ecad.App.Views.ConnectionsNavigatorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:converters="clr-namespace:Ecad.App.Converters">
+    <UserControl.Resources>
+        <converters:DevicePinLabelConverter x:Key="DevicePinLabelConverter"/>
+    </UserControl.Resources>
+    <DockPanel Margin="8">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock Text="Bulk-set for selected — Color:" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding BulkColor, UpdateSourceTrigger=PropertyChanged}"/>
+            <Button Content="Apply" Command="{Binding BulkSetColorCommand}" Margin="0,4,0,8" Padding="8,2" HorizontalAlignment="Left"/>
+
+            <TextBlock Text="Cross-section (mm²):" Margin="0,0,0,4"/>
+            <TextBox Text="{Binding BulkCrossSectionMm2, UpdateSourceTrigger=PropertyChanged}"/>
+            <Button Content="Apply" Command="{Binding BulkSetCrossSectionCommand}" Margin="0,4,0,0" Padding="8,2" HorizontalAlignment="Left"/>
+        </StackPanel>
+
+        <DataGrid x:Name="Grid" ItemsSource="{Binding Connections}" AutoGenerateColumns="False" CanUserAddRows="False"
+                  IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
+                  SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnMouseDoubleClick"
+                  PreviewMouseRightButtonDown="OnPreviewRightButtonDown">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Wire #" Binding="{Binding WireNumber}" Width="50"/>
+                <DataGridTemplateColumn Header="From" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Padding="4,0">
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{StaticResource DevicePinLabelConverter}">
+                                        <Binding Path="FromDevicePinId"/>
+                                        <Binding Path="DataContext.AllDevicePins" RelativeSource="{RelativeSource AncestorType=DataGrid}"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="To" Width="*">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Padding="4,0">
+                                <TextBlock.Text>
+                                    <MultiBinding Converter="{StaticResource DevicePinLabelConverter}">
+                                        <Binding Path="ToDevicePinId"/>
+                                        <Binding Path="DataContext.AllDevicePins" RelativeSource="{RelativeSource AncestorType=DataGrid}"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+            <DataGrid.ContextMenu>
+                <ContextMenu>
+                    <MenuItem Header="_Edit Connection..." Click="OnEditConnectionClick"/>
+                </ContextMenu>
+            </DataGrid.ContextMenu>
+        </DataGrid>
+    </DockPanel>
+</UserControl>

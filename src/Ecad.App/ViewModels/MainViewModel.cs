@@ -85,6 +85,25 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private CablesGridViewModel? _cablesNavigator;
 
+    /// <summary>View > Connections Navigator — same in-memory-only scope cut as the others.</summary>
+    [ObservableProperty]
+    private bool _isConnectionsNavigatorVisible = true;
+
+    /// <summary>The Connections Navigator's data/commands, moved here from the (now
+    /// Connections-less) Grid Editor. No Library DB connection, nothing to Dispose.</summary>
+    [ObservableProperty]
+    private ConnectionsGridViewModel? _connectionsNavigator;
+
+    /// <summary>View > Terminals Navigator — same in-memory-only scope cut as the others.</summary>
+    [ObservableProperty]
+    private bool _isTerminalsNavigatorVisible = true;
+
+    /// <summary>The Terminals Navigator's data/commands, moved here from the now-empty Grid Editor
+    /// shell. Opens its own Library DB connection for its Part picker (same pattern as
+    /// DevicesGridViewModel), so it does need Dispose.</summary>
+    [ObservableProperty]
+    private TerminationsGridViewModel? _terminalsNavigator;
+
     /// <summary>View > Interruption Points Navigator — same in-memory-only scope cut as the others.</summary>
     [ObservableProperty]
     private bool _isInterruptionPointsNavigatorVisible = true;
@@ -357,17 +376,21 @@ public partial class MainViewModel : ObservableObject, IDisposable
     public void OpenPage(Page page) => OpenOrFocusPageTab(page.Id, focusPlacementId: null);
 
     /// <summary>Finds this page's already-open tab and selects it (optionally focusing a placement —
-    /// Ctrl+Click cross-reference navigation), or creates a new one. The single entry point for "show
-    /// me this page" (M10: replaces SchematicPageWindow.OpenOrFocus's per-page window registry) — both
+    /// Ctrl+Click cross-reference navigation — or a definition point, preferred when both are given —
+    /// the Connections Navigator's jump), or creates a new one. The single entry point for "show me
+    /// this page" (M10: replaces SchematicPageWindow.OpenOrFocus's per-page window registry) — both
     /// MainWindow's double-click-a-page and SchematicPageViewModel.NavigateToPageRequested route here.</summary>
-    public void OpenOrFocusPageTab(long pageId, long? focusPlacementId)
+    public void OpenOrFocusPageTab(long pageId, long? focusPlacementId, long? focusDefinitionPointId = null)
     {
         var existing = OpenTabs.FirstOrDefault(t => t.PageId == pageId);
         if (existing is not null)
         {
             SelectedTab = existing;
-            if (focusPlacementId is { } id && existing.Content is SchematicPageViewModel existingViewModel)
-                existingViewModel.FocusPlacement(id);
+            if (existing.Content is SchematicPageViewModel existingViewModel)
+            {
+                if (focusDefinitionPointId is { } definitionPointId) existingViewModel.FocusDefinitionPoint(definitionPointId);
+                else if (focusPlacementId is { } id) existingViewModel.FocusPlacement(id);
+            }
             return;
         }
 
@@ -383,7 +406,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var viewModel = new SchematicPageViewModel(_session, page, focusPlacementId)
+        var viewModel = new SchematicPageViewModel(_session, page, focusPlacementId, focusDefinitionPointId)
         {
             OwnerWindow = Application.Current.MainWindow,
         };
@@ -573,15 +596,34 @@ public partial class MainViewModel : ObservableObject, IDisposable
         CablesNavigator = new CablesGridViewModel(_session);
         CablesNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
         _session.CablesChanged += RefreshCablesNavigator;
+
+        ConnectionsNavigator = new ConnectionsGridViewModel(_session);
+        ConnectionsNavigator.NavigateToPageRequested += (pageId, placementId, definitionPointId) => OpenOrFocusPageTab(pageId, placementId, definitionPointId);
+        _session.ConnectionsChanged += RefreshConnectionsNavigator;
+
+        TerminalsNavigator = new TerminationsGridViewModel(_session);
+        TerminalsNavigator.NavigateToPageRequested += (pageId, placementId, definitionPointId) => OpenOrFocusPageTab(pageId, placementId, definitionPointId);
     }
 
     private void RefreshDevicesNavigator()
     {
         DevicesNavigator?.Refresh();
         InterruptionPointsNavigator?.Refresh();
+        ConnectionsNavigator?.RefreshDevicePinOptions();
+        TerminalsNavigator?.Refresh();
     }
 
-    private void RefreshCablesNavigator() => CablesNavigator?.Refresh();
+    private void RefreshCablesNavigator()
+    {
+        CablesNavigator?.Refresh();
+        ConnectionsNavigator?.RefreshCableOptions();
+    }
+
+    private void RefreshConnectionsNavigator()
+    {
+        ConnectionsNavigator?.Refresh();
+        TerminalsNavigator?.Refresh();
+    }
 
     /// <summary>Keeps the Pages list panel in sync with report pages created/reused/removed by
     /// UpsertGeneratedReportPage, DeleteOrphanedCableManufacturingSheets, or a cable-delete's report
@@ -641,6 +683,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
         InterruptionPointsNavigator?.Dispose();
         InterruptionPointsNavigator = null;
         CablesNavigator = null;
+        ConnectionsNavigator = null;
+        TerminalsNavigator?.Dispose();
+        TerminalsNavigator = null;
     }
 
     public void Dispose()
@@ -653,6 +698,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         DevicesNavigator?.Dispose();
         InterruptionPointsNavigator?.Dispose();
+        TerminalsNavigator?.Dispose();
         _session?.Dispose();
     }
 }

@@ -64,6 +64,8 @@
                 <MenuItem Header="_Devices Navigator" IsCheckable="True" IsChecked="{Binding IsDevicesNavigatorVisible, Mode=TwoWay}"/>
                 <MenuItem Header="_Cables Navigator" IsCheckable="True" IsChecked="{Binding IsCablesNavigatorVisible, Mode=TwoWay}"/>
                 <MenuItem Header="_Interruption Points Navigator" IsCheckable="True" IsChecked="{Binding IsInterruptionPointsNavigatorVisible, Mode=TwoWay}"/>
+                <MenuItem Header="_Connections Navigator" IsCheckable="True" IsChecked="{Binding IsConnectionsNavigatorVisible, Mode=TwoWay}"/>
+                <MenuItem Header="_Terminals Navigator" IsCheckable="True" IsChecked="{Binding IsTerminalsNavigatorVisible, Mode=TwoWay}"/>
             </MenuItem>
             <MenuItem Header="_Settings">
                 <MenuItem Header="_Preferences..." Command="{Binding OpenSettingsCommand}"/>
@@ -157,6 +159,12 @@
             </TabItem>
             <TabItem Header="Interruption Points" Visibility="{Binding IsInterruptionPointsNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
                 <views:DevicesNavigatorView DataContext="{Binding InterruptionPointsNavigator}"/>
+            </TabItem>
+            <TabItem Header="Connections" Visibility="{Binding IsConnectionsNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <views:ConnectionsNavigatorView DataContext="{Binding ConnectionsNavigator}"/>
+            </TabItem>
+            <TabItem Header="Terminals" Visibility="{Binding IsTerminalsNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <views:TerminalsNavigatorView DataContext="{Binding TerminalsNavigator}"/>
             </TabItem>
             </TabControl>
 

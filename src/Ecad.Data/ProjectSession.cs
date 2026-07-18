@@ -513,6 +513,12 @@ public sealed class ProjectSession : IDisposable
         ConnectionsChanged?.Invoke();
     }
 
+    public void UpdateConnectionLength(long connectionId, double? lengthMm)
+    {
+        _connections.UpdateConnectionLength(connectionId, lengthMm);
+        ConnectionsChanged?.Invoke();
+    }
+
     public void UpdateConnectionEndpoints(long connectionId, long fromDevicePinId, long toDevicePinId)
     {
         _connections.UpdateConnectionEndpoints(connectionId, fromDevicePinId, toDevicePinId);
@@ -751,6 +757,13 @@ public sealed class ProjectSession : IDisposable
     /// <summary>The Cables Navigator's "jump to page" target — null if this cable has no Connections
     /// drawn anywhere yet (a valid state, not an error).</summary>
     public SiblingPlacementRef? GetFirstConnectionPageForCable(long cableId) => _connections.GetFirstConnectionPageForCable(cableId);
+
+    /// <summary>The Connections Navigator's "jump to page" target.</summary>
+    public SiblingPlacementRef? GetConnectionPage(long connectionId) => _connections.GetConnectionPage(connectionId);
+
+    /// <summary>The Connections Navigator's jump preferentially selects+centers this (the wire's actual
+    /// number/color marker) over a bare endpoint placement, when one is attached.</summary>
+    public DefinitionPoint? GetDefinitionPointForConnection(long connectionId) => _definitionPoints.GetByConnectionId(connectionId);
 
     public Cable? GetCable(long cableId) => _cables.GetCable(cableId);
 
