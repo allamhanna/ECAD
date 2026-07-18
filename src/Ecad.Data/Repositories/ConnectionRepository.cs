@@ -104,6 +104,38 @@ public class ConnectionRepository(SqliteConnection connection)
         return count > 0;
     }
 
+    /// <summary>The Cables Navigator's "jump to page" target — a Cable has no PageId of its own and
+    /// can validly have zero Connections at all (pure data, REQUIREMENTS 5.6), so this returns null in
+    /// that case rather than throwing. When a Connection does exist, both its ends resolve to the same
+    /// page (ADR-009: no cross-page wiring), so only the From end needs joining. Ordered by
+    /// Page.SortOrder/Page.Id/Connection.Id — "first" means earliest page in project order, same
+    /// convention as GetFirstPlacementForDevice. Same lenient-row-mapping reason as that method (zero-row
+    /// case still needs a concrete type for the computed PageLabel column).</summary>
+    public SiblingPlacementRef? GetFirstConnectionPageForCable(long cableId)
+    {
+        var row = connection.QuerySingleOrDefault<ConnectionPageRow>(
+            """
+            SELECT pp.PlacementId AS PlacementId, p.PageId, pg.PageNumberSegment
+            FROM Connection c
+            JOIN PlacementPin pp ON pp.DevicePinId = c.FromDevicePinId
+            JOIN Placement p ON p.Id = pp.PlacementId
+            JOIN Page pg ON pg.Id = p.PageId
+            WHERE c.CableId = @cableId
+            ORDER BY pg.SortOrder, pg.Id, c.Id
+            LIMIT 1;
+            """,
+            new { cableId });
+
+        return row is null ? null : new SiblingPlacementRef(row.PlacementId, row.PageId, row.PageNumberSegment ?? $"#{row.PageId}");
+    }
+
+    private sealed class ConnectionPageRow
+    {
+        public long PlacementId { get; set; }
+        public long PageId { get; set; }
+        public string? PageNumberSegment { get; set; }
+    }
+
     /// <summary>M8: run before deleting a CableCore, so any Connection assigned to that core is
     /// un-assigned (CableCoreId only) rather than blocking the core's deletion or orphaning the FK.</summary>
     public void ClearCableCoreReferences(long cableCoreId)

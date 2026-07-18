@@ -1,0 +1,40 @@
+<Window x:Class="Ecad.App.Views.EditCableDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Edit Cable" Height="280" Width="380"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="140"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <TextBlock Text="Tag*" Grid.Row="0" Grid.Column="0" VerticalAlignment="Center" Margin="0,4"/>
+        <TextBox x:Name="TagBox" Grid.Row="0" Grid.Column="1" Margin="0,4"/>
+
+        <TextBlock Text="Type Designation" Grid.Row="1" Grid.Column="0" VerticalAlignment="Center" Margin="0,4"/>
+        <TextBox x:Name="TypeDesignationBox" Grid.Row="1" Grid.Column="1" Margin="0,4"/>
+
+        <TextBlock Text="Length (mm)" Grid.Row="2" Grid.Column="0" VerticalAlignment="Center" Margin="0,4"/>
+        <TextBox x:Name="LengthBox" Grid.Row="2" Grid.Column="1" Margin="0,4"/>
+
+        <TextBlock Text="End-Type Classification" Grid.Row="3" Grid.Column="0" VerticalAlignment="Center" Margin="0,4"/>
+        <TextBox x:Name="EndTypeClassificationBox" Grid.Row="3" Grid.Column="1" Margin="0,4"/>
+
+        <TextBlock x:Name="ValidationText" Foreground="Red" Grid.Row="4" Grid.ColumnSpan="2"
+                   VerticalAlignment="Top" TextWrapping="Wrap" Visibility="Collapsed"/>
+
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Grid.Row="5" Grid.ColumnSpan="2" Margin="0,8,0,0">
+            <Button Content="OK" Width="80" Margin="0,0,8,0" Click="OnOkClick" IsDefault="True"/>
+            <Button Content="Cancel" Width="80" IsCancel="True"/>
+        </StackPanel>
+    </Grid>
+</Window>

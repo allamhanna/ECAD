@@ -729,6 +729,13 @@ public sealed class ProjectSession : IDisposable
 
     public IReadOnlyList<Device> GetAllDevices() => _devices.GetAllDevices(CurrentProject.Id);
 
+    /// <summary>The Devices Navigator's data source (excludes interruption-point-only devices — see
+    /// GetAllInterruptionPointDevices below).</summary>
+    public IReadOnlyList<Device> GetAllRealDevices() => _devices.GetAllRealDevices(CurrentProject.Id);
+
+    /// <summary>The Interruption Points Navigator's data source.</summary>
+    public IReadOnlyList<Device> GetAllInterruptionPointDevices() => _devices.GetAllInterruptionPointDevices(CurrentProject.Id);
+
     /// <summary>The Devices navigator's "jump to page" target — the placement on the earliest page
     /// (project order) among a possibly-multi-placement device's placements.</summary>
     public SiblingPlacementRef? GetFirstPlacementForDevice(long deviceId) => _placements.GetFirstPlacementForDevice(deviceId);
@@ -740,6 +747,10 @@ public sealed class ProjectSession : IDisposable
         _devices.FindByTag(CurrentProject.Id, function, location, deviceTag, excludingDeviceId) is null;
 
     public IReadOnlyList<Cable> GetAllCables() => _cables.GetAllCables(CurrentProject.Id);
+
+    /// <summary>The Cables Navigator's "jump to page" target — null if this cable has no Connections
+    /// drawn anywhere yet (a valid state, not an error).</summary>
+    public SiblingPlacementRef? GetFirstConnectionPageForCable(long cableId) => _connections.GetFirstConnectionPageForCable(cableId);
 
     public Cable? GetCable(long cableId) => _cables.GetCable(cableId);
 

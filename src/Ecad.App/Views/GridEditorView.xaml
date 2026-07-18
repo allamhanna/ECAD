@@ -6,9 +6,6 @@
         <TabItem Header="Connections">
             <local:ConnectionsGridView DataContext="{Binding ConnectionsTab}"/>
         </TabItem>
-        <TabItem Header="Cables">
-            <local:CablesGridView DataContext="{Binding CablesTab}"/>
-        </TabItem>
         <TabItem Header="Terminations">
             <local:TerminationsGridView DataContext="{Binding TerminationsTab}"/>
         </TabItem>

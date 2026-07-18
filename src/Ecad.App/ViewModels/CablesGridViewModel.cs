@@ -30,6 +30,11 @@ public sealed partial class CablesGridViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(AddCableCommand))]
     private string _newTag = string.Empty;
 
+    /// <summary>Raised by NavigateToCable (the Cables Navigator's double-click action) — carries
+    /// (PageId, PlacementId), same shape as DevicesGridViewModel's own, wired by MainViewModel to the
+    /// same OpenOrFocusPageTab entry point.</summary>
+    public event Action<long, long>? NavigateToPageRequested;
+
     public CablesGridViewModel(ProjectSession session)
     {
         _session = session;
@@ -113,4 +118,16 @@ public sealed partial class CablesGridViewModel : ObservableObject
     public void CommitCableEdit(Cable cable) => _session.UpdateCable(cable);
 
     public void CommitCoreEdit(CableCore core) => _session.UpdateCableCore(core);
+
+    /// <summary>A Cable has no page of its own — resolved via its earliest-wired Connection (project
+    /// order). Returns false (rather than silently doing nothing) when the cable has no Connections
+    /// drawn anywhere yet, a valid state for pure-data cables (REQUIREMENTS 5.6) — the caller shows
+    /// why nothing happened instead of a silent no-op.</summary>
+    public bool NavigateToCable(Cable cable)
+    {
+        var target = _session.GetFirstConnectionPageForCable(cable.Id);
+        if (target is null) return false;
+        NavigateToPageRequested?.Invoke(target.PageId, target.PlacementId);
+        return true;
+    }
 }

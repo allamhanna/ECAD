@@ -1,0 +1,25 @@
+<Window x:Class="Ecad.App.Views.ManageCableCoresDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Manage Cores" Height="360" Width="420"
+        WindowStartupLocation="CenterOwner">
+    <DockPanel Margin="12">
+        <TextBlock x:Name="TitleText" DockPanel.Dock="Top" FontWeight="Bold" Margin="0,0,0,8"/>
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button Content="Add Core" Command="{Binding AddCoreCommand}" Padding="8,2"/>
+            <Button Content="Delete Selected Core" Command="{Binding DeleteSelectedCoreCommand}" Margin="8,0,0,0" Padding="8,2"/>
+        </StackPanel>
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <Button Content="Close" Width="80" IsCancel="True" IsDefault="True"/>
+        </StackPanel>
+
+        <DataGrid x:Name="CoresGrid" ItemsSource="{Binding Cores}" AutoGenerateColumns="False" CanUserAddRows="False"
+                  SelectedItem="{Binding SelectedCore}" RowEditEnding="OnCoreRowEditEnding">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Core #" Binding="{Binding CoreNumber}" Width="60"/>
+                <DataGridTextColumn Header="Color" Binding="{Binding Color}" Width="80"/>
+                <DataGridTextColumn Header="Cross-section (mm²)" Binding="{Binding CrossSectionMm2}" Width="*"/>
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>

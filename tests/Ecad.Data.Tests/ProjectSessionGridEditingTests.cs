@@ -128,6 +128,32 @@ public class ProjectSessionGridEditingTests
     }
 
     [Fact]
+    public void GetAllRealDevices_And_GetAllInterruptionPointDevices_PartitionCorrectly()
+    {
+        using var file = new TempSqliteFile();
+        using var session = NewSession(file);
+        var page = session.AddPage(new Page { PageNumberSegment = "1" });
+
+        var real = session.PlaceSymbol(page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 0, 0, null, null, "X1");
+        var interruption = session.PlaceSymbol(page.Id, "InterruptionPoint", null, "SymbolLibrary/InterruptionPoint.svg", "References", ["1", "2"], 100, 0, null, null, "=1");
+        // Mixed: an interruption-point placement plus a real-component placement on the same Device
+        // — should be classified as real, not interruption-point-only (ADR-024's stated rule).
+        var mixed = session.PlaceSymbol(page.Id, "InterruptionPoint", null, "SymbolLibrary/InterruptionPoint.svg", "References", ["1", "2"], 200, 0, null, null, "=2");
+        session.PlaceSymbolOnExistingDevice(mixed.DeviceId, page.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 240, 0);
+
+        var realDevices = session.GetAllRealDevices();
+        var interruptionDevices = session.GetAllInterruptionPointDevices();
+
+        Assert.Contains(realDevices, d => d.Id == real.DeviceId);
+        Assert.Contains(realDevices, d => d.Id == mixed.DeviceId);
+        Assert.DoesNotContain(realDevices, d => d.Id == interruption.DeviceId);
+
+        Assert.Contains(interruptionDevices, d => d.Id == interruption.DeviceId);
+        Assert.DoesNotContain(interruptionDevices, d => d.Id == real.DeviceId);
+        Assert.DoesNotContain(interruptionDevices, d => d.Id == mixed.DeviceId);
+    }
+
+    [Fact]
     public void AddDevicePin_UpdateDevicePin_RoundTrip()
     {
         using var file = new TempSqliteFile();
@@ -352,6 +378,44 @@ public class ProjectSessionGridEditingTests
         session.UpdateConnectionCable(connection.Id, cable.Id, null);
 
         Assert.Throws<InvalidOperationException>(() => session.DeleteCable(cable.Id));
+    }
+
+    [Fact]
+    public void GetFirstConnectionPageForCable_WiredOnTwoPages_ReturnsTheOneOnTheEarliestPage()
+    {
+        using var file = new TempSqliteFile();
+        using var session = NewSession(file);
+        var earlyPage = session.AddPage(new Page { PageNumberSegment = "1" });
+        var latePage = session.AddPage(new Page { PageNumberSegment = "2" });
+
+        // Assigned to the later page first, then the earlier page second — assignment order is the
+        // opposite of page order, proving the lookup follows Page.SortOrder, not Connection.Id.
+        var lateA = session.PlaceSymbol(latePage.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 0, 0, null, null, "X1");
+        var lateB = session.PlaceSymbol(latePage.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 40, 0, null, null, "X2");
+        var lateConnection = session.CreateConnection(session.GetDevicePins(lateA.DeviceId).Single().Id, session.GetDevicePins(lateB.DeviceId).Single().Id);
+
+        var earlyA = session.PlaceSymbol(earlyPage.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 0, 0, null, null, "X3");
+        var earlyB = session.PlaceSymbol(earlyPage.Id, "Terminal", null, "SymbolLibrary/Terminal.svg", "Terminals", ["1"], 40, 0, null, null, "X4");
+        var earlyConnection = session.CreateConnection(session.GetDevicePins(earlyA.DeviceId).Single().Id, session.GetDevicePins(earlyB.DeviceId).Single().Id);
+
+        var cable = session.CreateCable(new Cable { Tag = "-W1" });
+        session.UpdateConnectionCable(lateConnection.Id, cable.Id, null);
+        session.UpdateConnectionCable(earlyConnection.Id, cable.Id, null);
+
+        var target = session.GetFirstConnectionPageForCable(cable.Id);
+
+        Assert.NotNull(target);
+        Assert.Equal(earlyPage.Id, target!.PageId);
+    }
+
+    [Fact]
+    public void GetFirstConnectionPageForCable_NoConnectionsAssigned_ReturnsNull()
+    {
+        using var file = new TempSqliteFile();
+        using var session = NewSession(file);
+        var cable = session.CreateCable(new Cable { Tag = "-W1" });
+
+        Assert.Null(session.GetFirstConnectionPageForCable(cable.Id));
     }
 
     [Fact]

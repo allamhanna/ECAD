@@ -62,6 +62,8 @@
             <MenuItem Header="_View">
                 <MenuItem Header="_Page Navigator" IsCheckable="True" IsChecked="{Binding IsPageNavigatorVisible, Mode=TwoWay}"/>
                 <MenuItem Header="_Devices Navigator" IsCheckable="True" IsChecked="{Binding IsDevicesNavigatorVisible, Mode=TwoWay}"/>
+                <MenuItem Header="_Cables Navigator" IsCheckable="True" IsChecked="{Binding IsCablesNavigatorVisible, Mode=TwoWay}"/>
+                <MenuItem Header="_Interruption Points Navigator" IsCheckable="True" IsChecked="{Binding IsInterruptionPointsNavigatorVisible, Mode=TwoWay}"/>
             </MenuItem>
             <MenuItem Header="_Settings">
                 <MenuItem Header="_Preferences..." Command="{Binding OpenSettingsCommand}"/>
@@ -149,6 +151,12 @@
             </TabItem>
             <TabItem Header="Devices" Visibility="{Binding IsDevicesNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
                 <views:DevicesNavigatorView DataContext="{Binding DevicesNavigator}"/>
+            </TabItem>
+            <TabItem Header="Cables" Visibility="{Binding IsCablesNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <views:CablesNavigatorView DataContext="{Binding CablesNavigator}"/>
+            </TabItem>
+            <TabItem Header="Interruption Points" Visibility="{Binding IsInterruptionPointsNavigatorVisible, Converter={StaticResource BoolToVisibilityConverter}}">
+                <views:DevicesNavigatorView DataContext="{Binding InterruptionPointsNavigator}"/>
             </TabItem>
             </TabControl>
 

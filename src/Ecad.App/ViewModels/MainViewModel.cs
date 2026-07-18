@@ -75,6 +75,27 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private DevicesGridViewModel? _devicesNavigator;
 
+    /// <summary>View > Cables Navigator — same in-memory-only scope cut as the other navigators.</summary>
+    [ObservableProperty]
+    private bool _isCablesNavigatorVisible = true;
+
+    /// <summary>The Cables Navigator's data/commands — same shape as DevicesNavigator, moved here
+    /// from the (now Cables-less) Grid Editor. Unlike DevicesGridViewModel this one holds no Library
+    /// DB connection, so there's nothing to Dispose.</summary>
+    [ObservableProperty]
+    private CablesGridViewModel? _cablesNavigator;
+
+    /// <summary>View > Interruption Points Navigator — same in-memory-only scope cut as the others.</summary>
+    [ObservableProperty]
+    private bool _isInterruptionPointsNavigatorVisible = true;
+
+    /// <summary>A second DevicesGridViewModel instance (interruptionPointsOnly: true) — same class,
+    /// same commands/dialogs as DevicesNavigator, just a different data source. Opens its own Library
+    /// DB connection for its Part picker, the same already-established pattern every such ViewModel
+    /// uses (there's no sharing mechanism for that connection anywhere in this app).</summary>
+    [ObservableProperty]
+    private DevicesGridViewModel? _interruptionPointsNavigator;
+
     [ObservableProperty]
     private DocumentTabViewModel? _selectedTab;
 
@@ -545,10 +566,22 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         DevicesNavigator = new DevicesGridViewModel(_session);
         DevicesNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
+        InterruptionPointsNavigator = new DevicesGridViewModel(_session, interruptionPointsOnly: true);
+        InterruptionPointsNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
         _session.PlacementsChanged += RefreshDevicesNavigator;
+
+        CablesNavigator = new CablesGridViewModel(_session);
+        CablesNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
+        _session.CablesChanged += RefreshCablesNavigator;
     }
 
-    private void RefreshDevicesNavigator() => DevicesNavigator?.Refresh();
+    private void RefreshDevicesNavigator()
+    {
+        DevicesNavigator?.Refresh();
+        InterruptionPointsNavigator?.Refresh();
+    }
+
+    private void RefreshCablesNavigator() => CablesNavigator?.Refresh();
 
     /// <summary>Keeps the Pages list panel in sync with report pages created/reused/removed by
     /// UpsertGeneratedReportPage, DeleteOrphanedCableManufacturingSheets, or a cable-delete's report
@@ -605,6 +638,9 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         DevicesNavigator?.Dispose();
         DevicesNavigator = null;
+        InterruptionPointsNavigator?.Dispose();
+        InterruptionPointsNavigator = null;
+        CablesNavigator = null;
     }
 
     public void Dispose()
@@ -616,6 +652,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
         }
 
         DevicesNavigator?.Dispose();
+        InterruptionPointsNavigator?.Dispose();
         _session?.Dispose();
     }
 }

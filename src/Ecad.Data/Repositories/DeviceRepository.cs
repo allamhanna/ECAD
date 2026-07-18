@@ -90,6 +90,46 @@ public class DeviceRepository(SqliteConnection connection)
         return connection.Query<Device>("SELECT * FROM Device WHERE ProjectId = @projectId ORDER BY Id;", new { projectId }).ToList();
     }
 
+    /// <summary>The Devices Navigator's data source — every Device with at least one Placement whose
+    /// symbol isn't InterruptionPoint (a Device that mixes an interruption-point placement with a real
+    /// one is still "real" — it's no longer purely a navigation aid once it has an actual component).
+    /// Exact complement of GetAllInterruptionPointDevices below. GetAllDevices itself stays untouched
+    /// — it also backs the "attach to existing device" picker shown when placing any symbol, which
+    /// must see every Device regardless of kind (that's how two interruption points get paired).</summary>
+    public IReadOnlyList<Device> GetAllRealDevices(long projectId)
+    {
+        return connection.Query<Device>(
+            """
+            SELECT d.* FROM Device d
+            WHERE d.ProjectId = @projectId
+              AND EXISTS (
+                SELECT 1 FROM Placement p
+                JOIN Symbol s ON s.Id = p.SymbolId
+                WHERE p.DeviceId = d.Id AND s.Name <> 'InterruptionPoint'
+              )
+            ORDER BY d.Id;
+            """,
+            new { projectId }).ToList();
+    }
+
+    /// <summary>The Interruption Points Navigator's data source — every Device whose Placements are
+    /// exclusively the InterruptionPoint symbol. Exact complement of GetAllRealDevices above.</summary>
+    public IReadOnlyList<Device> GetAllInterruptionPointDevices(long projectId)
+    {
+        return connection.Query<Device>(
+            """
+            SELECT d.* FROM Device d
+            WHERE d.ProjectId = @projectId
+              AND NOT EXISTS (
+                SELECT 1 FROM Placement p
+                JOIN Symbol s ON s.Id = p.SymbolId
+                WHERE p.DeviceId = d.Id AND s.Name <> 'InterruptionPoint'
+              )
+            ORDER BY d.Id;
+            """,
+            new { projectId }).ToList();
+    }
+
     /// <summary>Exact-match lookup for tag-uniqueness checks (Section 6.1: "tag uniqueness enforced per project"). Excludes a given Device (for rename-in-place).</summary>
     public Device? FindByTag(long projectId, string? function, string? location, string deviceTag, long? excludingDeviceId)
     {

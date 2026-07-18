@@ -38,6 +38,13 @@ public sealed partial class DevicesGridViewModel : ObservableObject, IDisposable
     private readonly ProjectSession _session;
     private readonly SqliteConnection _libraryConnection;
     private readonly PartRepository _libraryParts;
+    private readonly bool _interruptionPointsOnly;
+
+    /// <summary>False for the Interruption Points Navigator — an interruption point is a navigation
+    /// aid, not a physical component, so a manufacturer Part has no meaning for it. Bound by
+    /// DevicesNavigatorView to hide the Part-assign header entirely rather than leave a
+    /// never-useful control visible.</summary>
+    public bool SupportsPartAssignment => !_interruptionPointsOnly;
 
     public ObservableCollection<DeviceRow> Devices { get; } = [];
     public ObservableCollection<DeviceRow> SelectedDevices { get; } = [];
@@ -51,9 +58,14 @@ public sealed partial class DevicesGridViewModel : ObservableObject, IDisposable
     /// MainViewModel to the same OpenOrFocusPageTab entry point cross-reference navigation uses.</summary>
     public event Action<long, long>? NavigateToPageRequested;
 
-    public DevicesGridViewModel(ProjectSession session)
+    /// <summary>interruptionPointsOnly selects which of the two exact-complement data sources this
+    /// instance shows — MainViewModel creates one instance of each (DevicesNavigator/
+    /// InterruptionPointsNavigator), sharing every command/dialog since renaming, Part-assigning, and
+    /// cascade-deleting are equally valid operations on either kind.</summary>
+    public DevicesGridViewModel(ProjectSession session, bool interruptionPointsOnly = false)
     {
         _session = session;
+        _interruptionPointsOnly = interruptionPointsOnly;
         _libraryConnection = LibraryDatabase.Open();
         _libraryParts = new PartRepository(_libraryConnection);
         foreach (var part in _libraryParts.GetAllParts()) AllParts.Add(part);
@@ -63,7 +75,8 @@ public sealed partial class DevicesGridViewModel : ObservableObject, IDisposable
     public void Refresh()
     {
         Devices.Clear();
-        foreach (var device in _session.GetAllDevices())
+        var devices = _interruptionPointsOnly ? _session.GetAllInterruptionPointDevices() : _session.GetAllRealDevices();
+        foreach (var device in devices)
         {
             Devices.Add(new DeviceRow
             {

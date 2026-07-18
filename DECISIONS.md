@@ -568,3 +568,47 @@ Researching the jump mechanism found that focusing a placement (`SchematicPageVi
 - 229 tests passing by the end of this arc (up from 220) — a `MigrationTests` column-existence check, a `ProjectSessionPageManagementTests` settings round-trip, and a `GetFirstPlacementForDevice` test proving the lookup follows page order rather than creation order. No new UI-layer automated tests (established pattern) — live click-through of grouping, the gear menu, the View menu, and the jump-and-center behavior is pending the user.
 
 ---
+
+## ADR-023: Cables Navigator — Core Management Moves to a Dialog, Zero-Connection Cables Handled Explicitly
+
+**Status:** Accepted (2026-07-18)
+
+**Context:**
+Following the Devices Navigator template (ADR-022) for the next entity in the stated roadmap. Confirmed explicitly with the user: Cables should be removed from the Grid Editor entirely, the same "no duplicate access" call already made for Devices, rather than a lighter side-by-side option that would have kept Cables in both places.
+
+Two real differences from Devices surfaced immediately:
+1. The Grid Editor's Cables tab is a **master-detail** view (Cable list + its Cores side-by-side) — that genuinely doesn't fit a ~260px sidebar column, unlike Devices' flat grid.
+2. A Cable can validly exist as pure data with **zero** Connections drawn anywhere (REQUIREMENTS 5.6), unlike a Device (always ≥1 Placement once created) — "jump to page" needed to handle that gracefully rather than assume a target always exists.
+
+**Decision — Core management moves into a dialog, not a trimmed inline pane:**
+`ManageCableCoresDialog` lifts the Cores `DataGrid` + Add/Delete buttons verbatim out of the old `CablesGridView`'s right-hand pane into a modal `Window`, bound to the *same* `CablesGridViewModel` instance the navigator itself uses — `Cores`/`SelectedCore`/`AddCoreCommand`/`DeleteSelectedCoreCommand`/`CommitCoreEdit` needed zero new plumbing, only a new container. `EditCableDialog` (Tag/TypeDesignation/LengthMm/EndTypeClassification) mirrors `EditDeviceTagDialog` for the same reason Devices needed one: the navigator's own grid is read-only (double-click can only mean "jump," no WPF cell-edit-mode ambiguity), so field editing needed an explicit action.
+
+**Decision — jump-to-page resolves through a Connection, and explicitly reports when there isn't one:**
+A Cable has no `PageId` of its own; new `ConnectionRepository.GetFirstConnectionPageForCable(cableId)` mirrors `GetFirstPlacementForDevice`'s exact shape (`Connection → PlacementPin → Placement → Page`, ordered by `Page.SortOrder`), reusing the existing `GetConnectionsForPage` join pattern and confirming a fact needed for correctness: per ADR-009, a Connection's two ends always resolve to the same page, so only the `From` end needs joining. Returns `null` when the cable has no Connections — `CablesGridViewModel.NavigateToCable` returns `bool` accordingly, and the view shows a plain "this cable isn't wired to any page yet" message rather than a silent no-op on double-click, applying ADR-013's "explain why nothing happened" precedent to a double-click instead of a disabled button.
+
+**Consequences:**
+- `GridEditorViewModel`/`GridEditorView` lose the Cables tab entirely (Connections/Terminations remain); `OnCablesChanged` keeps its `ConnectionsTab.RefreshCableOptions()` call (still needed) but drops the now-gone `CablesTab.Refresh()`. Old `CablesGridView.xaml(.cs)` deleted outright.
+- Sidebar tab strip is now Pages/Devices/Cables, each independently toggleable from the `View` menu.
+- 2 new tests (`GetFirstConnectionPageForCable`: wired-on-two-pages returns the earlier one; zero-connections returns null) — 231 tests passing (up from 229).
+
+---
+
+## ADR-024: Interruption Points Get Their Own Navigator, Split Out of Devices
+
+**Status:** Accepted (2026-07-18)
+
+**Context:**
+User-flagged: interruption points (M7's two-ended cross-page-continuation symbol) are implemented as ordinary `Device`s — placing one creates a Device+Placement exactly like a relay or terminal, and pairing two across pages reuses M6's "attach to existing Device" flow verbatim. That was the right call at the time (zero new schema), but it meant they showed up mixed into the Devices Navigator (ADR-022), indistinguishable from real components — a real UX confusion, not a cosmetic nit.
+
+**Decision — classification via a Placement→Symbol join, not a new Device field:**
+`Device` is symbol-agnostic by design (only `Placement.SymbolId` records what was actually drawn), so no column exists to check directly. Two new, exact-complement `DeviceRepository` queries: `GetAllRealDevices` (`EXISTS` a Placement whose Symbol isn't `InterruptionPoint`) and `GetAllInterruptionPointDevices` (`NOT EXISTS` one). Checked first rather than assumed: nothing in `PlaceSymbolOnExistingDevice` prevents mixing an interruption-point placement with a real one on the same Device — a mixed Device is deliberately classified as **real**, not interruption-point-only, since it's no longer purely a navigation aid once it has an actual component. `ProjectSession.GetAllDevices` itself — used by the "attach to existing device" picker shown when placing *any* symbol, including pairing two interruption points — stays completely untouched, since that picker must see every Device regardless of kind; the split only affects which Devices each *navigator* shows.
+
+**Decision — one parameterized ViewModel/View, not a fork:**
+Every existing `DevicesGridViewModel` behavior (Edit Tag, bulk Part-assign, cascade-delete, jump-to-page) is equally valid for an interruption point — there was no reason to duplicate the class. It gained one constructor parameter (`interruptionPointsOnly`, default `false`) selecting which of the two new queries `Refresh()` calls; `MainViewModel` creates a **second instance** of the identical class, reusing `DevicesNavigatorView` unchanged (it had no hardcoded "Devices" text) as a fourth sidebar tab, "Interruption Points." The second instance opens its own Library DB connection for its Part picker — the same already-established one-connection-per-Part-picker-owning-ViewModel pattern (`PartsLibraryViewModel`, `DevicesGridViewModel` itself), not a new consideration.
+
+**Consequences:**
+- No schema change — this is a query-level split over existing data, not a new entity or column.
+- 1 new test (`GetAllRealDevices`/`GetAllInterruptionPointDevices` partitioning — a real device, a pure-interruption-point device, and a mixed device each land in the correct bucket) — 232 tests passing (up from 231).
+- Explicitly out of scope: a dedicated "jump to the paired other end" action for Interruption Points specifically — Ctrl+Click cross-reference navigation (already generic, Device-based) already provides this once you're looking at any one placement, so the navigator only needed to list the right *set* of Devices, not reinvent sibling navigation.
+
+---
