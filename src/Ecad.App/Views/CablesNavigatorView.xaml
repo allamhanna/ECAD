@@ -12,7 +12,7 @@
                   IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
                   SelectedItem="{Binding SelectedCable}"
                   SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnMouseDoubleClick"
-                  PreviewMouseRightButtonDown="OnPreviewRightButtonDown">
+                  PreviewMouseRightButtonDown="OnPreviewRightButtonDown" KeyDown="OnGridKeyDown">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Tag" Binding="{Binding Tag}" Width="80"/>
                 <DataGridTextColumn Header="Type Designation" Binding="{Binding TypeDesignation}" Width="*"/>

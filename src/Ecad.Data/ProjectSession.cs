@@ -189,29 +189,22 @@ public sealed class ProjectSession : IDisposable
         return page;
     }
 
-    /// <summary>Flushes any WAL contents to the main database file. Writes already commit immediately
-    /// on each repository call — this exists so File &gt; Save is a real, truthful action.</summary>
-    public void Checkpoint()
-    {
-        using var command = _connection.CreateCommand();
-        command.CommandText = "PRAGMA wal_checkpoint;";
-        command.ExecuteNonQuery();
-    }
-
     /// <summary>
     /// Copies the current project file to a new path and returns a session backed by that new
     /// file. This session's connection is disposed as part of the switch — the caller should
     /// replace its reference with the returned session and not use this instance afterward.
+    /// No explicit flush/checkpoint needed first: every write already commits directly to the main
+    /// database file the instant its own ProjectSession call returns (no WAL mode, no in-memory
+    /// buffer), and the app is single-threaded, so there's never a write in flight at the moment
+    /// this runs.
     /// </summary>
     public ProjectSession SaveAs(string newFilePath)
     {
         if (string.Equals(Path.GetFullPath(newFilePath), Path.GetFullPath(FilePath), StringComparison.OrdinalIgnoreCase))
         {
-            Checkpoint();
             return this;
         }
 
-        Checkpoint();
         _connection.Dispose();
         SqliteConnection.ClearAllPools();
         File.Copy(FilePath, newFilePath, overwrite: true);

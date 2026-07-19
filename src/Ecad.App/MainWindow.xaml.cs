@@ -54,4 +54,23 @@ public partial class MainWindow : Window
         button.ContextMenu!.PlacementTarget = button;
         button.ContextMenu.IsOpen = true;
     }
+
+    /// <summary>Delete key as an alternative to the ListView's own right-click "Delete Selected" —
+    /// same command, same confirmation prompt, just reachable without a mouse.</summary>
+    private void OnPagesKeyDown(object sender, KeyEventArgs e)
+    {
+        if (DataContext is not MainViewModel viewModel || e.Key != Key.Delete) return;
+        if (viewModel.DeleteSelectedPagesCommand.CanExecute(null)) viewModel.DeleteSelectedPagesCommand.Execute(null);
+    }
+
+    /// <summary>Ctrl+W (close the active tab) — handled here rather than a declarative
+    /// Window.InputBindings KeyBinding, since CloseTabCommand needs a DocumentTabViewModel parameter
+    /// and a CommandParameter binding on a freestanding InputBinding (not part of the visual tree) is
+    /// the one scenario that's genuinely unreliable across WPF versions.</summary>
+    private void OnWindowPreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.W || Keyboard.Modifiers != ModifierKeys.Control) return;
+        if (DataContext is not MainViewModel viewModel || viewModel.SelectedTab is not { } tab) return;
+        if (viewModel.CloseTabCommand.CanExecute(tab)) viewModel.CloseTabCommand.Execute(tab);
+    }
 }

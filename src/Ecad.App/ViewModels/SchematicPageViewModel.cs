@@ -1469,6 +1469,26 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         if (key == Key.R && RotateSelectionCommand.CanExecute(null))
         {
             RotateSelectionCommand.Execute(null);
+            return;
+        }
+
+        if (key == Key.Escape)
+        {
+            // CancelActiveDrag only reverts an in-progress drag/wire-draw/cable-line-draw — Escape
+            // additionally backs out of an armed-but-not-yet-used tool and clears every selection,
+            // the universal "Escape backs out of whatever you were doing" convention this canvas
+            // never had a key for until now (only Ctrl+Z/Y/Delete/R existed).
+            CancelActiveDrag();
+            SelectedPaletteSymbol = null;
+            IsPlacingDefinitionPoint = false;
+            IsDrawingCableLine = false;
+            SelectedPlacementId = null;
+            SelectedPlacementIds.Clear();
+            SelectedDefinitionPointIds.Clear();
+            SelectedCableLineIds.Clear();
+            SelectedCableLineCrossingIds.Clear();
+            StatusText = string.Empty;
+            RedrawRequested?.Invoke();
         }
     }
 

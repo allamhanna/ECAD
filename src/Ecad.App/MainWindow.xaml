@@ -8,7 +8,8 @@
         xmlns:views="clr-namespace:Ecad.App.Views"
         xmlns:conv="clr-namespace:Ecad.App.Converters"
         mc:Ignorable="d"
-        Title="{Binding WindowTitle}" Height="700" Width="1200" Icon="Assets/AppIcon.ico">
+        Title="{Binding WindowTitle}" Height="700" Width="1200" Icon="Assets/AppIcon.ico"
+        PreviewKeyDown="OnWindowPreviewKeyDown">
     <Window.Resources>
         <!-- M10: each open document's tab content is resolved by its ViewModel's type — one
              ContentPresenter in the TabControl below, many possible Views, no manual view-locator. -->
@@ -33,14 +34,23 @@
         <conv:BoolToColumnWidthConverter x:Key="BoolToColumnWidthConverter"/>
         <BooleanToVisibilityConverter x:Key="BoolToVisibilityConverter"/>
     </Window.Resources>
+    <Window.InputBindings>
+        <!-- Ctrl+W (close the active tab) isn't here — CloseTabCommand needs a DocumentTabViewModel
+             parameter, and a CommandParameter binding on a freestanding InputBinding (not part of the
+             visual tree) is the one scenario that's genuinely unreliable across WPF versions. Handled
+             instead via OnPreviewKeyDown in the code-behind, guaranteed correct. -->
+        <KeyBinding Key="N" Modifiers="Control" Command="{Binding NewProjectCommand}"/>
+        <KeyBinding Key="O" Modifiers="Control" Command="{Binding OpenProjectCommand}"/>
+        <KeyBinding Key="S" Modifiers="Control+Shift" Command="{Binding SaveAsCommand}"/>
+    </Window.InputBindings>
     <DockPanel>
         <Menu DockPanel.Dock="Top">
             <MenuItem Header="_File">
-                <MenuItem Header="_New Project..." Command="{Binding NewProjectCommand}"/>
-                <MenuItem Header="_Open Project..." Command="{Binding OpenProjectCommand}"/>
+                <MenuItem Header="_New Project..." Command="{Binding NewProjectCommand}" InputGestureText="Ctrl+N"/>
+                <MenuItem Header="_Open Project..." Command="{Binding OpenProjectCommand}" InputGestureText="Ctrl+O"/>
                 <Separator/>
-                <MenuItem Header="_Save" Command="{Binding SaveCommand}" InputGestureText="Ctrl+S"/>
-                <MenuItem Header="Save _As..." Command="{Binding SaveAsCommand}"/>
+                <MenuItem Header="Save _As..." Command="{Binding SaveAsCommand}" InputGestureText="Ctrl+Shift+S"/>
+                <MenuItem Header="_Backup Project..." Command="{Binding BackupProjectCommand}"/>
                 <MenuItem Header="_Close Project" Command="{Binding CloseProjectCommand}"/>
                 <Separator/>
                 <MenuItem Header="_Grid Editor" Command="{Binding OpenGridEditorCommand}"/>
@@ -111,7 +121,7 @@
                     </Button>
                 </StackPanel>
                 <ListView ItemsSource="{Binding Pages}" Margin="8" MouseDoubleClick="OnPagesDoubleClick"
-                          SelectionMode="Extended" SelectionChanged="OnPagesSelectionChanged">
+                          SelectionMode="Extended" SelectionChanged="OnPagesSelectionChanged" KeyDown="OnPagesKeyDown">
                     <ListView.View>
                         <GridView>
                             <GridViewColumn Header="Function" Width="70" DisplayMemberBinding="{Binding FunctionSegment}"/>

@@ -668,3 +668,62 @@ Asked directly: retire `File > Grid Editor` entirely (an empty window serves no 
 - This completes the originally-requested navigator set. Any future navigator (there is no next one currently planned) would follow the exact same shape: reuse the existing Grid-tab ViewModel unchanged in its data layer, read-only grid + double-click-to-jump + Edit dialog for anything that was inline-editable, `PreviewMouseRightButtonDown` row-select fix, a `View`-menu visibility checkbox.
 
 ---
+
+## ADR-027: M14 Hardening Split Into Three; Keyboard Shortcuts Built First
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+M14 ("non-functional hardening: autosave/crash recovery, perf pass at 500+ elements/page, keyboard shortcuts") was defined in the original milestone list as one line covering three quite different concerns. Before writing any code, three parallel Explore agents researched each piece's actual current state — and all three findings reshaped the milestone before a single line was written.
+
+**Finding — autosave/crash-safety is a smaller problem than the name implies, but a real bug hid inside it:**
+Every `ProjectSession` mutating method commits straight to SQLite synchronously (confirmed: no batched transactions, no in-memory edit buffer at any layer) — so there is little of the classic "unsaved work lost on crash" risk this kind of milestone usually targets. What research did find: `ProjectSession.Checkpoint()` runs `PRAGMA wal_checkpoint`, but the database connection was never actually put into WAL journal mode anywhere in `ProjectDatabase.cs` — meaning every "File > Save" click today runs a pragma against a mode the database isn't even in, a silent no-op. This is now deferred to its own separate pass (real WAL mode + periodic timestamped backups, to guard against file *corruption* rather than lost edits, since lost edits were never really the risk).
+
+**Finding — no confirmed performance problem exists to fix:**
+`SchematicCanvasRenderer.Render` draws every placement/wire/pin/definition-point/cable-line unconditionally with no viewport culling, and `SchematicPageViewModel.BuildRenderList`/`BuildWiringRenderInfo` fully rebuild from scratch (including re-running `OrthogonalRouter`/junction-detection/cable-crossing geometry) on every single mouse-move during a drag. Both are real, but REQUIREMENTS' "500+ elements/page" target has never actually been measured against — deferred to its own pass, starting with a synthetic stress-test page rather than speculative optimization.
+
+**Finding — keyboard shortcuts had a live bug, not just a gap:**
+`Ctrl+S` shows `InputGestureText="Ctrl+S"` in the File menu, but zero `KeyBinding`/`Window.InputBindings` exist anywhere in the app — the hint has been decorative only since it was added. This, plus the fact that none of the five sidebar Navigators (or the Pages list) respond to any key at all (mouse/right-click only), made shortcuts the most contained and highest-immediate-value of the three — built first, per direct confirmation, with autosave/backups and the performance stress-test to follow as their own separate passes.
+
+**Decision — window-level `KeyBinding`s for parameterless commands, code-behind for the one parameterized shortcut:**
+`Ctrl+N`/`Ctrl+O`/`Ctrl+S`/`Ctrl+Shift+S` are declarative `<Window.InputBindings>` entries with plain `Command="{Binding XCommand}"` bindings — each command's own `CanExecute` (e.g. `IsProjectOpen`) governs the shortcut automatically, no extra guard code. `Ctrl+W` (close the active tab) is deliberately handled via a `PreviewKeyDown` handler in `MainWindow.xaml.cs` instead: `CloseTabCommand` needs a `DocumentTabViewModel` parameter, and a `CommandParameter="{Binding SelectedTab}"` binding on a freestanding `InputBinding` (not part of the visual tree) is the one binding scenario that's genuinely unreliable across WPF versions — not worth the risk for a single shortcut when a direct, guaranteed-correct code-behind call is just as simple.
+
+**Decision — Delete key only where deletion already independently exists:**
+Added to Pages, Devices/Interruption Points, and Cables (same command the existing right-click "Delete Selected" already calls). Deliberately NOT added to Connections or Terminals — per ADR-011/015, neither has any independent grid-delete at all (a Connection/ConnectionEnd has no identity separate from the canvas geometry that produces it), so there is no command to bind a key to.
+
+**Decision — Escape gets its own branch in the canvas's existing `HandleKeyDown`, not a new mechanism:**
+The canvas understood exactly 4 keys before this (Ctrl+Z/Y, Delete, R). `CancelActiveDrag()` already existed and reverts an in-progress drag/wire-draw/cable-line-draw, but doesn't touch armed-tool state (`SelectedPaletteSymbol`/`IsPlacingDefinitionPoint`/`IsDrawingCableLine`) or any selection collection — Escape's branch calls it and then explicitly clears all of those, since the universal "Escape backs out of whatever you were doing" expectation covers all three (a mid-drag cancel, an armed-but-unused tool, and a plain selection), not just the drag case `CancelActiveDrag` was originally built for.
+
+**Consequences:**
+- No schema/test changes — this is WPF input-handling glue over already-tested commands, consistent with this app's established no-automated-UI-tests convention. 235 tests unaffected.
+- Autosave/backups and the performance stress-test remain explicitly open, each to be planned and built as its own pass once this one is confirmed live.
+
+---
+
+## ADR-028: Backup Is Manual-Only — No Save, No Scheduled Anything
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+Second of M14's three workstreams (ADR-027). The user's own mental model reframed the problem before any design was proposed: "Saving should be automatic... in EPLAN there's no saving, if you do anything it's directly saved." Research (originally done for ADR-027) already confirmed this is true here — every `ProjectSession` mutating method commits straight to SQLite synchronously, with no in-memory edit buffer or batched transaction at any layer. There is no "unsaved work" risk to build periodic autosave against; it already happened, by construction, since M1.
+
+That reframed what `Checkpoint()`/`Save` actually were: `File > Save`/`Ctrl+S` called `ProjectSession.Checkpoint()`, which runs `PRAGMA wal_checkpoint` — but the database was never put into WAL journal mode anywhere (ADR-027's finding), so this has always been a silent no-op. The first plan proposed fixing this by turning on real WAL mode plus a periodic backup timer. The user explicitly rejected that: no scheduled/periodic anything — "backup should only happen when I ask" — plus a manual "export the project to a new location" action, and "version control" scoped to just timestamped filenames (explicitly declining an in-app backup-history browser).
+
+**Decision — remove Save/Ctrl+S entirely, not fix it:**
+It's a dead concept now that every edit is already durably committed the instant it happens — there is nothing left to "flush." `MainViewModel.SaveCommand`/`Save()`, the `_Save` `MenuItem`, and the `Ctrl+S` `KeyBinding` (added the same session, in ADR-027, now superseded) are all deleted. `Save As...` stays exactly as-is — it genuinely does something different (switches the active session to a new file), not a flush.
+
+**Decision — remove `ProjectSession.Checkpoint()` too, as dead code:**
+`PRAGMA wal_checkpoint` against a database that's never in WAL mode does nothing; keeping a method whose own doc comment implies otherwise is exactly the kind of misleading no-op this codebase's own conventions call out and remove (ADR-011/015 precedent). `SaveAs` drops both calls to it: the same-path early-return case becomes a true no-op (nothing needs flushing that isn't already committed), and the real-copy case is just `File.Copy` directly. This is safe under SQLite's default rollback-journal mode with no extra step, since the app is single-threaded (every command runs synchronously on the UI thread) — there's never a write in flight at the moment a copy runs.
+
+**Decision — new `BackupProject` command, copies without switching the active session:**
+Opens a `SaveFileDialog` (same `"ECAD Project (*.ecad)|*.ecad"` filter every other project dialog uses) defaulting to `{ProjectName}_{yyyy-MM-dd_HHmm}.ecad` — a timestamped filename is the entire "version control" ask, achieved with a naming convention instead of new UI, since repeated backups never collide. On confirm: `File.Copy(_session.FilePath, dialog.FileName, overwrite: true)`, wrapped in the same try/catch-plus-`MessageBox` pattern already used elsewhere for a failed file operation (e.g. `ImportEplanPartsAsync`). Unlike `SaveAs`, the active `_session`/open tabs/window title are untouched — the user keeps working in the original project.
+
+**Decision — crash dialog gets a one-line reassurance:**
+`App.xaml.cs`'s `DispatcherUnhandledException` handler showed only the raw exception before this. Since every edit up to the crash was already durably committed (this ADR's whole starting premise), the message now states that up front — turns a scary generic error box into an accurate, reassuring one.
+
+**Consequences:**
+- No new tests: `Checkpoint`'s removal had no dedicated coverage beyond `Checkpoint_DoesNotThrow` (deleted), and `SaveAs_SamePath_IsANoOpCheckpointNotACopy` was renamed to `SaveAs_SamePath_IsANoOp` to match its new behavior. `BackupProject` is WPF file-dialog glue, consistent with this app's no-automated-UI-tests convention. 234 tests passing (235 minus the one deleted test).
+- User confirmed live: File menu no longer shows Save/Ctrl+S does nothing, `Backup Project...` writes a valid timestamped `.ecad` copy to a chosen folder while the original project stays open and unaffected, `Save As...` unchanged.
+- The performance stress-test (the third and last M14 workstream) remains open.
+
+---

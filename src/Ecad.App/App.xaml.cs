@@ -18,7 +18,9 @@ public partial class App : Application
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        MessageBox.Show(e.Exception.ToString(), "Unexpected error", MessageBoxButton.OK, MessageBoxImage.Error);
+        var message = "Your project data up to this point has already been saved — every change is written to disk immediately, so nothing is lost.\n\n"
+            + e.Exception;
+        MessageBox.Show(message, "Unexpected error", MessageBoxButton.OK, MessageBoxImage.Error);
         e.Handled = true;
     }
 }

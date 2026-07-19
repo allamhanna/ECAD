@@ -83,4 +83,12 @@ public partial class CablesNavigatorView : UserControl
         }
         return null;
     }
+
+    /// <summary>Delete key as an alternative to the context menu's "Delete Selected" — same command,
+    /// same confirmation prompt, just reachable without a mouse.</summary>
+    private void OnGridKeyDown(object sender, KeyEventArgs e)
+    {
+        if (DataContext is not CablesGridViewModel vm || e.Key != Key.Delete) return;
+        if (vm.DeleteSelectedCablesCommand.CanExecute(null)) vm.DeleteSelectedCablesCommand.Execute(null);
+    }
 }

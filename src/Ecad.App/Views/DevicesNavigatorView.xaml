@@ -16,7 +16,7 @@
         <DataGrid x:Name="Grid" ItemsSource="{Binding Devices}" AutoGenerateColumns="False" CanUserAddRows="False"
                   IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
                   SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnMouseDoubleClick"
-                  PreviewMouseRightButtonDown="OnPreviewRightButtonDown">
+                  PreviewMouseRightButtonDown="OnPreviewRightButtonDown" KeyDown="OnGridKeyDown">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Function" Binding="{Binding FunctionSegment}" Width="60"/>
                 <DataGridTextColumn Header="Location" Binding="{Binding LocationSegment}" Width="60"/>

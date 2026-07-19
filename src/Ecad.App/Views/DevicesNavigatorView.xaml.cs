@@ -67,4 +67,12 @@ public partial class DevicesNavigatorView : UserControl
         device.DeviceTagSegment = dialog.TagSegment;
         vm.CommitDeviceEdit(device);
     }
+
+    /// <summary>Delete key as an alternative to the context menu's "Delete Selected" — same command,
+    /// same confirmation prompt, just reachable without a mouse.</summary>
+    private void OnGridKeyDown(object sender, KeyEventArgs e)
+    {
+        if (DataContext is not DevicesGridViewModel vm || e.Key != Key.Delete) return;
+        if (vm.DeleteSelectedCommand.CanExecute(null)) vm.DeleteSelectedCommand.Execute(null);
+    }
 }

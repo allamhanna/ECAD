@@ -30,12 +30,12 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     private string _statusText = "No project open.";
 
-    // RelayCommand doesn't auto-requery on property changes — without these attributes, Save/SaveAs/
-    // CloseProject/AddPage stay in whatever CanExecute state they had when first queried (disabled),
-    // regardless of IsProjectOpen actually changing afterward.
+    // RelayCommand doesn't auto-requery on property changes — without these attributes, SaveAs/
+    // BackupProject/CloseProject/AddPage stay in whatever CanExecute state they had when first
+    // queried (disabled), regardless of IsProjectOpen actually changing afterward.
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(SaveCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BackupProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(CloseProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenGridEditorCommand))]
@@ -166,13 +166,6 @@ public partial class MainViewModel : ObservableObject, IDisposable
     }
 
     [RelayCommand(CanExecute = nameof(IsProjectOpen))]
-    private void Save()
-    {
-        _session!.Checkpoint();
-        StatusText = $"Saved at {DateTimeOffset.Now:T}";
-    }
-
-    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
     private void SaveAs()
     {
         var saveDialog = new SaveFileDialog
@@ -186,6 +179,33 @@ public partial class MainViewModel : ObservableObject, IDisposable
         _session = _session.SaveAs(saveDialog.FileName);
         StatusText = $"Saved as {saveDialog.FileName}";
         SaveLastOpenedProject(saveDialog.FileName);
+    }
+
+    /// <summary>Exports a timestamped copy of the current project file wherever the user picks —
+    /// unlike SaveAs, this doesn't switch the active session/open tabs to the new file, it's purely
+    /// a manual backup. No explicit flush needed first: every edit already commits directly to the
+    /// main database file as it happens (no autosave concept to build here — it already always
+    /// happens), and the app is single-threaded, so nothing is ever mid-write when this runs.</summary>
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void BackupProject()
+    {
+        var saveDialog = new SaveFileDialog
+        {
+            Filter = "ECAD Project (*.ecad)|*.ecad",
+            DefaultExt = ".ecad",
+            FileName = $"{_session!.CurrentProject.Name}_{DateTimeOffset.Now:yyyy-MM-dd_HHmm}",
+        };
+        if (saveDialog.ShowDialog() != true) return;
+
+        try
+        {
+            File.Copy(_session.FilePath, saveDialog.FileName, overwrite: true);
+            StatusText = $"Backed up to {saveDialog.FileName}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(ex.ToString(), "Backup Failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     [RelayCommand(CanExecute = nameof(IsProjectOpen))]

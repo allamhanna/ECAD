@@ -14,7 +14,9 @@ electrical CAD/
   EcadApp.sln
   src/
     Ecad.App/              WPF startup project (net8.0-windows)
-      App.xaml.cs           global DispatcherUnhandledException handler (shows a message box)
+      App.xaml.cs           global DispatcherUnhandledException handler (shows a message box; M14/
+                             ADR-028 added a one-line reassurance that work up to the crash is already
+                             saved, ahead of the raw exception text)
       Canvas/                PlacementViewItem (mutable live-canvas placement: position/rotation/tag/
                              Function/Location/SiblingPageLabels/Pins + cached SKPicture), ConnectionViewItem
                              (M7: just a wire's three identity fields — ConnectionId/FromDevicePinId/
@@ -52,7 +54,12 @@ electrical CAD/
                              ReassignCableLineCommand, DeleteCableLineCommand,
                              RotateCableLineCrossingCommand, SetCableLineCrossingCoreCommand)
       ViewModels/           MainViewModel (CommunityToolkit.Mvvm ObservableObject + RelayCommands:
-                             NewProject, OpenProject, Save, SaveAs, CloseProject, AddPage,
+                             NewProject, OpenProject, SaveAs, CloseProject, AddPage,
+                             M14/ADR-028: Save/Ctrl+S removed entirely (dead concept — every edit already
+                             commits synchronously, nothing to flush); BackupProject added instead
+                             (CanExecute = IsProjectOpen, copies the open .ecad file to a
+                             user-chosen/timestamped-default path via SaveFileDialog + File.Copy, without
+                             switching the active session — unlike SaveAs),
                              ImportEplanPartsAsync, OpenGridEditor, OpenPartsLibrary,
                              OpenSymbolBrowser, Exit; M10/ADR-016: OpenTabs
                              (ObservableCollection<DocumentTabViewModel>) + SelectedTab replace the old
@@ -574,8 +581,11 @@ electrical CAD/
       MigrationRunner.cs    applies embedded .sql files in order, tracks schema_migrations table
       ProjectDatabase.cs    opens/creates a project's single-file SQLite db, runs Project migrations
       LibraryDatabase.cs    opens/creates %LOCALAPPDATA%\Ecad\library.db, runs Library migrations
-      ProjectSession.cs     Create/Open a .ecad file, holds CurrentProject + Pages, AddPage, Checkpoint
-                             (File > Save), SaveAs (checkpoint + file copy + reopen on new path),
+      ProjectSession.cs     Create/Open a .ecad file, holds CurrentProject + Pages, AddPage,
+                             SaveAs (file copy + reopen on new path; M14/ADR-028 removed Checkpoint()
+                             entirely as dead code — PRAGMA wal_checkpoint against a database never put
+                             into WAL mode was always a silent no-op — so SaveAs's same-path case is now
+                             a true no-op and its real-copy case is a plain File.Copy),
                              Dispose — the testable core behind Ecad.App's MainViewModel; M6 added
                              PlaceSymbolOnExistingDevice, RenameDeviceTag, GetAllDevices,
                              SuggestNextDesignation, IsTagAvailable, a placement-level (not device-level)

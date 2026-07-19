@@ -40,15 +40,6 @@ public class ProjectSessionTests
     }
 
     [Fact]
-    public void Checkpoint_DoesNotThrow()
-    {
-        using var file = new TempSqliteFile();
-        using var session = ProjectSession.Create(file.Path, new Project { Name = "Test Machine", CreatedAtUtc = DateTimeOffset.UtcNow });
-
-        session.Checkpoint();
-    }
-
-    [Fact]
     public void Open_MissingProjectRow_Throws()
     {
         using var file = new TempSqliteFile();
@@ -81,7 +72,7 @@ public class ProjectSessionTests
     }
 
     [Fact]
-    public void SaveAs_SamePath_IsANoOpCheckpointNotACopy()
+    public void SaveAs_SamePath_IsANoOp()
     {
         using var file = new TempSqliteFile();
         using var session = ProjectSession.Create(file.Path, new Project { Name = "Test Machine", CreatedAtUtc = DateTimeOffset.UtcNow });
