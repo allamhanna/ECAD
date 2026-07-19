@@ -75,6 +75,19 @@ public sealed partial class TerminationsGridViewModel : ObservableObject, IDispo
     /// uses, since a Termination is just one end of a Connection and resolves the same way.</summary>
     public event Action<long, long, long?>? NavigateToPageRequested;
 
+    /// <summary>Two-way canvas↔navigator highlight sync (see DevicesGridViewModel.HighlightedDevice) —
+    /// keyed on the row's own ConnectionId, same resolution ConnectionsGridViewModel.HighlightedConnection
+    /// uses (a Termination has no canvas identity beyond its parent Connection's DefinitionPoint).</summary>
+    [ObservableProperty]
+    private TerminationRow? _highlightedTermination;
+
+    public event Action<long>? TerminationHighlightRequested;
+
+    partial void OnHighlightedTerminationChanged(TerminationRow? value)
+    {
+        if (value is not null) TerminationHighlightRequested?.Invoke(value.ConnectionId);
+    }
+
     public TerminationsGridViewModel(ProjectSession session)
     {
         _session = session;

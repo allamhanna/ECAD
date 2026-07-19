@@ -49,6 +49,26 @@ public class ProjectSessionMultiPlacementTests
     }
 
     [Fact]
+    public void GetPlacementRefsForDevice_MultiplePlacements_ReturnsAllOfThem()
+    {
+        using var file = new TempSqliteFile();
+        using var session = ProjectSession.Create(file.Path, new Project { Name = "Test", CreatedAtUtc = DateTimeOffset.UtcNow });
+        var earlyPage = session.AddPage(new Page { PageNumberSegment = "1" });
+        var latePage = session.AddPage(new Page { PageNumberSegment = "2" });
+
+        var contact = session.PlaceSymbol(latePage.Id, "ContactNO", null, "SymbolLibrary/ContactNO.svg", "Contacts",
+            ["13", "14"], 0, 0, null, null, "K1");
+        var coil = session.PlaceSymbolOnExistingDevice(contact.DeviceId, earlyPage.Id, "RelayCoil", null,
+            "SymbolLibrary/RelayCoil.svg", "Coils", ["A1", "A2"], 0, 0);
+
+        var refs = session.GetPlacementRefsForDevice(contact.DeviceId);
+
+        Assert.Equal(2, refs.Count);
+        Assert.Contains(refs, r => r.PlacementId == coil.Id && r.PageId == earlyPage.Id);
+        Assert.Contains(refs, r => r.PlacementId == contact.Id && r.PageId == latePage.Id);
+    }
+
+    [Fact]
     public void DeletePlacement_NonLastPlacement_KeepsDeviceAndSiblingAlive_RemovesOnlyExclusivePins()
     {
         using var file = new TempSqliteFile();

@@ -36,17 +36,56 @@ public static class JunctionDetector
             if (connectionIds.Count >= 3) junctions.Add(point);
         }
 
-        foreach (var (point, connectionIds) in endpointGroups)
+        // T-junctions: a point landing strictly inside another connection's routed path. Checking every
+        // endpoint against every connection's route is O(endpoints x connections) — quadratic, and the
+        // dominant rebuild cost on any page with a few hundred wires (M14 perf pass). Every
+        // OrthogonalRouter route is horizontal/vertical-only, so a segment can only ever contain a point
+        // that shares its exact Y (horizontal) or X (vertical) coordinate — indexing segments by that
+        // coordinate first means each endpoint only re-checks the handful of segments that could
+        // possibly contain it, not every connection in the project. The actual containment test is
+        // still the same AutoConnectDetector.IsPointStrictlyOnPolyline used before, just against a
+        // filtered candidate list instead of everything.
+        var horizontalSegments = new Dictionary<double, List<(WorldPoint A, WorldPoint B)>>();
+        var verticalSegments = new Dictionary<double, List<(WorldPoint A, WorldPoint B)>>();
+        var diagonalSegments = new List<(WorldPoint A, WorldPoint B)>();
+
+        foreach (var connection in connections)
         {
-            foreach (var connection in connections)
+            for (var i = 0; i < connection.Route.Count - 1; i++)
             {
-                if (connectionIds.Contains(connection.ConnectionId)) continue;
-                if (AutoConnectDetector.IsPointStrictlyOnPolyline(point, connection.Route))
+                var a = connection.Route[i];
+                var b = connection.Route[i + 1];
+                if (a.Y == b.Y)
                 {
-                    junctions.Add(point);
-                    break;
+                    if (!horizontalSegments.TryGetValue(a.Y, out var segments)) horizontalSegments[a.Y] = segments = [];
+                    segments.Add((a, b));
+                }
+                else if (a.X == b.X)
+                {
+                    if (!verticalSegments.TryGetValue(a.X, out var segments)) verticalSegments[a.X] = segments = [];
+                    segments.Add((a, b));
+                }
+                else
+                {
+                    diagonalSegments.Add((a, b));
                 }
             }
+        }
+
+        foreach (var point in endpointGroups.Keys)
+        {
+            var isJunction = false;
+
+            if (horizontalSegments.TryGetValue(point.Y, out var hSegments))
+                isJunction = hSegments.Any(s => AutoConnectDetector.IsPointStrictlyOnPolyline(point, [s.A, s.B]));
+
+            if (!isJunction && verticalSegments.TryGetValue(point.X, out var vSegments))
+                isJunction = vSegments.Any(s => AutoConnectDetector.IsPointStrictlyOnPolyline(point, [s.A, s.B]));
+
+            if (!isJunction && diagonalSegments.Count > 0)
+                isJunction = diagonalSegments.Any(s => AutoConnectDetector.IsPointStrictlyOnPolyline(point, [s.A, s.B]));
+
+            if (isJunction) junctions.Add(point);
         }
 
         return junctions.ToList();

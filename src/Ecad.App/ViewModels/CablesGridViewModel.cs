@@ -35,6 +35,12 @@ public sealed partial class CablesGridViewModel : ObservableObject
     /// same OpenOrFocusPageTab entry point.</summary>
     public event Action<long, long>? NavigateToPageRequested;
 
+    /// <summary>Two-way canvas↔navigator highlight sync (see DevicesGridViewModel.HighlightedDevice) —
+    /// SelectedCable already drives the Cores sub-grid via OnSelectedCableChanged below and is already
+    /// bound to the DataGrid's SelectedItem, so it does double duty here rather than adding a parallel
+    /// property that would need its own XAML binding to fight the existing one.</summary>
+    public event Action<long>? CableHighlightRequested;
+
     public CablesGridViewModel(ProjectSession session)
     {
         _session = session;
@@ -54,6 +60,7 @@ public sealed partial class CablesGridViewModel : ObservableObject
         Cores.Clear();
         if (value is null) return;
         foreach (var core in _session.GetCableCores(value.Id)) Cores.Add(core);
+        CableHighlightRequested?.Invoke(value.Id);
     }
 
     [RelayCommand(CanExecute = nameof(CanAddCable))]

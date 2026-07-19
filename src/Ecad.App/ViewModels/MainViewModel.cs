@@ -38,6 +38,7 @@ public partial class MainViewModel : ObservableObject, IDisposable
     [NotifyCanExecuteChangedFor(nameof(BackupProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(CloseProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddPageCommand))]
+    [NotifyCanExecuteChangedFor(nameof(GenerateStressTestPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenGridEditorCommand))]
     [NotifyCanExecuteChangedFor(nameof(GenerateConnectionListReportCommand))]
     [NotifyCanExecuteChangedFor(nameof(GenerateBomReportCommand))]
@@ -239,6 +240,26 @@ public partial class MainViewModel : ObservableObject, IDisposable
         Pages.Add(page);
     }
 
+    /// <summary>M14 Part 3 (performance hardening): a dev-only, kept-around tool for regenerating a
+    /// synthetic 500+-element page on demand, so real render/drag performance can be measured against
+    /// something rather than guessed at (see StressTestGenerator and the corner frame-timing readout
+    /// on the canvas itself).</summary>
+    [RelayCommand(CanExecute = nameof(IsProjectOpen))]
+    private void GenerateStressTestPage()
+    {
+        var page = _session!.AddPage(new Page
+        {
+            FunctionSegment = "TEST",
+            PageNumberSegment = "STRESS",
+            PageType = PageType.Schematic,
+        });
+        Pages.Add(page);
+
+        DevTools.StressTestGenerator.Generate(_session, page.Id);
+        OpenOrFocusPageTab(page.Id, focusPlacementId: null);
+        StatusText = "Generated stress-test page (~300 placements, ~285 connections).";
+    }
+
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RenameSelectedPageCommand))]
     [NotifyCanExecuteChangedFor(nameof(RenumberSelectedPagesCommand))]
@@ -431,10 +452,72 @@ public partial class MainViewModel : ObservableObject, IDisposable
             OwnerWindow = Application.Current.MainWindow,
         };
         viewModel.NavigateToPageRequested += (targetPageId, placementId) => OpenOrFocusPageTab(targetPageId, placementId);
+        viewModel.RedrawRequested += () => SyncNavigatorHighlightsFromCanvas(viewModel);
 
         var tab = new DocumentTabViewModel { Header = FormatPageHeader(page), Content = viewModel, PageId = pageId };
         OpenTabs.Add(tab);
         SelectedTab = tab;
+    }
+
+    /// <summary>Tracks which canvas tab's own selection is currently being pushed into a navigator, so
+    /// the navigator→canvas half of the sync (HighlightDeviceOnCanvas etc.) knows not to re-focus that
+    /// SAME tab a moment later — without this, selecting (or moving, which keeps the moved placement
+    /// selected) a placement would bounce straight back through the navigator and re-center the
+    /// viewport on wherever it now sits, even though the user never asked to jump anywhere. Other
+    /// already-open tabs showing the same entity (a genuinely different page) still get focused.</summary>
+    private SchematicPageViewModel? _syncingHighlightFromCanvas;
+
+    /// <summary>Canvas → navigators half of the two-way highlight sync: piggybacks on RedrawRequested
+    /// (already fired by every selection-changing code path on the canvas, plus every drag mouse-move —
+    /// harmless extra checks, not extra events) rather than adding a dedicated SelectionChanged event.
+    /// Checks single-selection state in priority order — a placement selection takes precedence over a
+    /// stale cable-line/definition-point selection left over from before, matching ClearSelection's own
+    /// "only one kind of thing is really selected at a time" shape.</summary>
+    private void SyncNavigatorHighlightsFromCanvas(SchematicPageViewModel vm)
+    {
+        _syncingHighlightFromCanvas = vm;
+        try
+        {
+            SyncNavigatorHighlightsFromCanvasCore(vm);
+        }
+        finally
+        {
+            _syncingHighlightFromCanvas = null;
+        }
+    }
+
+    private void SyncNavigatorHighlightsFromCanvasCore(SchematicPageViewModel vm)
+    {
+        if (vm.SelectedPlacementId is { } placementId)
+        {
+            var deviceId = vm.Placements.FirstOrDefault(p => p.PlacementId == placementId)?.DeviceId;
+            if (deviceId is { } id)
+            {
+                if (DevicesNavigator is { } devicesNav) devicesNav.HighlightedDevice = devicesNav.Devices.FirstOrDefault(d => d.Id == id);
+                if (InterruptionPointsNavigator is { } interruptionNav) interruptionNav.HighlightedDevice = interruptionNav.Devices.FirstOrDefault(d => d.Id == id);
+            }
+            return;
+        }
+
+        if (vm.SelectedCableLineIds.Count == 1)
+        {
+            var cableId = vm.CableLines.FirstOrDefault(c => c.Id == vm.SelectedCableLineIds.First())?.CableId;
+            if (cableId is { } id && CablesNavigator is { } cablesNav)
+                cablesNav.SelectedCable = cablesNav.Cables.FirstOrDefault(c => c.Id == id);
+            return;
+        }
+
+        if (vm.SelectedDefinitionPointIds.Count == 1)
+        {
+            var connectionId = vm.DefinitionPoints.FirstOrDefault(p => p.Id == vm.SelectedDefinitionPointIds.First())?.ConnectionId;
+            if (connectionId is { } id)
+            {
+                if (ConnectionsNavigator is { } connectionsNav)
+                    connectionsNav.HighlightedConnection = connectionsNav.Connections.FirstOrDefault(c => c.Id == id);
+                if (TerminalsNavigator is { } terminalsNav)
+                    terminalsNav.HighlightedTermination = terminalsNav.AllRows.FirstOrDefault(t => t.ConnectionId == id);
+            }
+        }
     }
 
     /// <summary>Loaded once and reused across projects — the report layout templates are app-level
@@ -609,20 +692,83 @@ public partial class MainViewModel : ObservableObject, IDisposable
 
         DevicesNavigator = new DevicesGridViewModel(_session);
         DevicesNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
+        DevicesNavigator.DeviceHighlightRequested += HighlightDeviceOnCanvas;
+        DevicesNavigator.DevicesCascadeDeletedOnPages += RunAutoConnectOnOpenTabsForPagesAffectedByCascadeDelete;
         InterruptionPointsNavigator = new DevicesGridViewModel(_session, interruptionPointsOnly: true);
         InterruptionPointsNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
+        InterruptionPointsNavigator.DeviceHighlightRequested += HighlightDeviceOnCanvas;
+        InterruptionPointsNavigator.DevicesCascadeDeletedOnPages += RunAutoConnectOnOpenTabsForPagesAffectedByCascadeDelete;
         _session.PlacementsChanged += RefreshDevicesNavigator;
 
         CablesNavigator = new CablesGridViewModel(_session);
         CablesNavigator.NavigateToPageRequested += (pageId, placementId) => OpenOrFocusPageTab(pageId, placementId);
+        CablesNavigator.CableHighlightRequested += HighlightCableOnCanvas;
         _session.CablesChanged += RefreshCablesNavigator;
 
         ConnectionsNavigator = new ConnectionsGridViewModel(_session);
         ConnectionsNavigator.NavigateToPageRequested += (pageId, placementId, definitionPointId) => OpenOrFocusPageTab(pageId, placementId, definitionPointId);
+        ConnectionsNavigator.ConnectionHighlightRequested += HighlightConnectionOnCanvas;
         _session.ConnectionsChanged += RefreshConnectionsNavigator;
 
         TerminalsNavigator = new TerminationsGridViewModel(_session);
         TerminalsNavigator.NavigateToPageRequested += (pageId, placementId, definitionPointId) => OpenOrFocusPageTab(pageId, placementId, definitionPointId);
+        TerminalsNavigator.TerminationHighlightRequested += HighlightConnectionOnCanvas;
+    }
+
+    /// <summary>Navigator → canvas half of the two-way highlight sync (Devices/Interruption Points):
+    /// highlights on every currently-open canvas tab that shows one of this Device's placements —
+    /// deliberately doesn't open or switch to a page that isn't already open (that's what double-click
+    /// navigation is for; this is a passive, ambient highlight).</summary>
+    private void HighlightDeviceOnCanvas(long deviceId)
+    {
+        foreach (var reference in _session!.GetPlacementRefsForDevice(deviceId))
+        {
+            if (OpenTabs.FirstOrDefault(t => t.PageId == reference.PageId)?.Content is SchematicPageViewModel vm
+                && vm != _syncingHighlightFromCanvas)
+                vm.FocusPlacement(reference.PlacementId);
+        }
+    }
+
+    /// <summary>Navigator → canvas half of the two-way highlight sync (Cables) — same shape as
+    /// HighlightDeviceOnCanvas, a Cable's lines can span several pages.</summary>
+    private void HighlightCableOnCanvas(long cableId)
+    {
+        foreach (var line in _session!.GetCableLinesForCable(cableId))
+        {
+            if (OpenTabs.FirstOrDefault(t => t.PageId == line.PageId)?.Content is SchematicPageViewModel vm
+                && vm != _syncingHighlightFromCanvas)
+                vm.FocusCableLine(line.Id);
+        }
+    }
+
+    /// <summary>Navigator → canvas half of the two-way highlight sync (Connections/Terminals) — a
+    /// Connection always resolves to exactly one page (ADR-009), and highlights its DefinitionPoint if
+    /// it has one, same preference OpenOrFocusPageTab's own focusDefinitionPointId already gives. A
+    /// bare wire with no DefinitionPoint has nothing selectable on canvas (ADR-015), so this just
+    /// explains that rather than silently doing nothing (ADR-013).</summary>
+    private void HighlightConnectionOnCanvas(long connectionId)
+    {
+        var pageRef = _session!.GetConnectionPage(connectionId);
+        if (pageRef is null) return;
+        if (OpenTabs.FirstOrDefault(t => t.PageId == pageRef.PageId)?.Content is not SchematicPageViewModel vm) return;
+        if (vm == _syncingHighlightFromCanvas) return;
+
+        var definitionPoint = _session.GetDefinitionPointForConnection(connectionId);
+        if (definitionPoint is not null) vm.FocusDefinitionPoint(definitionPoint.Id);
+        else StatusText = "This wire has no definition point to highlight on canvas yet.";
+    }
+
+    /// <summary>Devices/Interruption Points Navigator's cascade-delete has no canvas/geometry awareness
+    /// of its own — this re-runs auto-connect on every currently-open canvas tab for a page the delete
+    /// touched, the same "any currently-empty pin looking for a facing match" check the canvas's own
+    /// DeleteSelection already runs, just triggered from the list instead.</summary>
+    private void RunAutoConnectOnOpenTabsForPagesAffectedByCascadeDelete(IReadOnlyList<long> pageIds)
+    {
+        foreach (var pageId in pageIds)
+        {
+            if (OpenTabs.FirstOrDefault(t => t.PageId == pageId)?.Content is SchematicPageViewModel vm)
+                vm.RunAutoConnectForExternalDelete();
+        }
     }
 
     private void RefreshDevicesNavigator()

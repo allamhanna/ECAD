@@ -91,6 +91,16 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     private const double PinSnapRadius = 12; // world units — magnetic pull toward a nearby pin while placing/dragging
 
     public CanvasViewport Viewport { get; } = new();
+
+    /// <summary>M14 Part 3: a permanent, low-cost frame-timing readout — kept on rather than
+    /// instrumented-then-removed, so a future perf regression on any page (not just a deliberately
+    /// generated stress-test one) is visible without re-adding a Stopwatch each time.</summary>
+    [ObservableProperty]
+    private string _frameDiagnosticsText = "";
+
+    public void RecordFrameTiming(double rebuildMs, double renderMs) =>
+        FrameDiagnosticsText = $"Rebuild: {rebuildMs:0.0}ms · Render: {renderMs:0.0}ms";
+
     public ObservableCollection<PlacementViewItem> Placements { get; } = [];
     public ObservableCollection<ConnectionViewItem> Connections { get; } = [];
     public ObservableCollection<DefinitionPointViewItem> DefinitionPoints { get; } = [];
@@ -223,6 +233,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         _session.ConnectionsChanged += OnSessionConnectionsChanged;
         _session.DefinitionPointsChanged += OnSessionDefinitionPointsChanged;
         _session.CableLinesChanged += OnSessionCableLinesChanged;
+        _session.CablesChanged += OnSessionCablesChanged;
         AppSettingsStore.SettingsChanged += OnAppSettingsChanged;
 
         var folder = Path.Combine(AppContext.BaseDirectory, "SymbolLibrary");
@@ -296,6 +307,14 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             CableLines.Add(cableLineItem);
         }
 
+        // Reconciles any pins left facing each other unconnected — e.g. a Devices Navigator
+        // cascade-delete that touched this page while it wasn't open in any tab (RunAutoConnectForPins
+        // only runs against a page's live ViewModel, so a delete on a closed page can't trigger it at
+        // the time; this closes that gap the moment the page is actually opened, instead of leaving it
+        // wrong until something else happens to move one of the exact affected pins). Not undo-tracked
+        // — this is reconciling load-time state, not a user action.
+        _session.RunBatch(() => RunAutoConnectForPins(GetUnconnectedPinIds()));
+
         if (focusDefinitionPointId is { } definitionPointId && DefinitionPoints.FirstOrDefault(p => p.Id == definitionPointId) is { } definitionPoint)
         {
             SelectedDefinitionPointIds.Clear();
@@ -322,7 +341,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanUndo))]
     private void Undo()
     {
-        _undoRedo.Undo();
+        _session.RunBatch(_undoRedo.Undo);
         NotifyUndoRedoChanged();
         RefreshFromSession();
     }
@@ -332,7 +351,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     [RelayCommand(CanExecute = nameof(CanRedo))]
     private void Redo()
     {
-        _undoRedo.Redo();
+        _session.RunBatch(_undoRedo.Redo);
         NotifyUndoRedoChanged();
         RefreshFromSession();
     }
@@ -608,25 +627,35 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             : ["1"];
 
         long placedId;
+        IUndoableCommand placeCommand;
         if (dialog.SelectedExistingDeviceId is { } existingDeviceId)
         {
             var existingDevice = existingDevices.First(d => d.Id == existingDeviceId);
             var command = new AttachPlacementCommand(_session, this, _page.Id, existingDeviceId,
                 existingDevice.FunctionSegment, existingDevice.LocationSegment, existingDevice.DeviceTagSegment, symbol, pinNames, worldX, worldY);
-            _undoRedo.Execute(command);
+            command.Do();
             placedId = command.PlacementId;
+            placeCommand = command;
             StatusText = $"Placed '{symbol.Definition.Name}' on existing device {existingDevice.DeviceTagSegment}.";
         }
         else
         {
             var command = new PlaceSymbolCommand(_session, this, _page.Id, symbol, pinNames, worldX, worldY,
                 dialog.Function, dialog.Location, dialog.Designation);
-            _undoRedo.Execute(command);
+            command.Do();
             placedId = command.PlacementId;
+            placeCommand = command;
             StatusText = $"Placed '{symbol.Definition.Name}' as {dialog.Designation}.";
         }
 
-        RunAutoConnect(placedId);
+        // Auto-connect's own wire changes are folded into the SAME undo step as the placement itself
+        // (via CompositeCommand) rather than pushed as separate stack entries — otherwise a single
+        // Ctrl+Z after placing a device that happened to bridge two others would only undo the last
+        // wire change, not the placement, leaving wiring in a state the user never asked for.
+        var autoConnectCommands = RunAutoConnect(placedId);
+        var allCommands = new List<IUndoableCommand> { placeCommand };
+        allCommands.AddRange(autoConnectCommands);
+        _undoRedo.Record(allCommands.Count == 1 ? allCommands[0] : new CompositeCommand(allCommands));
         NotifyUndoRedoChanged();
         RefreshFromSession();
     }
@@ -930,26 +959,30 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         var maxY = Math.Max(worldY1, worldY2);
         var definitionPointHits = HitTestDefinitionPointsInRect(minX, minY, maxX, maxY);
         var cableLineCrossingHits = HitTestCableLineCrossingsInRect(minX, minY, maxX, maxY);
+        var cableLineHits = HitTestCableLinesInRect(minX, minY, maxX, maxY, requireFullContainment: draggedLeftToRight);
 
         ClearSelection();
         foreach (var id in placementHits) SelectedPlacementIds.Add(id);
         foreach (var id in definitionPointHits) SelectedDefinitionPointIds.Add(id);
         foreach (var id in cableLineCrossingHits) SelectedCableLineCrossingIds.Add(id);
-        if (placementHits.Count == 1 && definitionPointHits.Count == 0 && cableLineCrossingHits.Count == 0) SelectedPlacementId = placementHits[0];
+        foreach (var id in cableLineHits) SelectedCableLineIds.Add(id);
+        if (placementHits.Count == 1 && definitionPointHits.Count == 0 && cableLineCrossingHits.Count == 0 && cableLineHits.Count == 0)
+            SelectedPlacementId = placementHits[0];
 
-        StatusText = placementHits.Count + definitionPointHits.Count + cableLineCrossingHits.Count == 0
+        StatusText = placementHits.Count + definitionPointHits.Count + cableLineCrossingHits.Count + cableLineHits.Count == 0
             ? "Nothing selected."
-            : BuildRubberBandSelectionSummary(placementHits.Count, definitionPointHits.Count, cableLineCrossingHits.Count);
+            : BuildRubberBandSelectionSummary(placementHits.Count, definitionPointHits.Count, cableLineCrossingHits.Count, cableLineHits.Count);
         NotifySelectionCommandsChanged();
         RedrawRequested?.Invoke();
     }
 
-    private static string BuildRubberBandSelectionSummary(int placementCount, int definitionPointCount, int cableLineCrossingCount)
+    private static string BuildRubberBandSelectionSummary(int placementCount, int definitionPointCount, int cableLineCrossingCount, int cableLineCount)
     {
         var parts = new List<string>();
         if (placementCount > 0) parts.Add($"{placementCount} placement{(placementCount == 1 ? "" : "s")}");
         if (definitionPointCount > 0) parts.Add($"{definitionPointCount} definition point{(definitionPointCount == 1 ? "" : "s")}");
         if (cableLineCrossingCount > 0) parts.Add($"{cableLineCrossingCount} cable core{(cableLineCrossingCount == 1 ? "" : "s")}");
+        if (cableLineCount > 0) parts.Add($"{cableLineCount} cable line{(cableLineCount == 1 ? "" : "s")}");
         return string.Join(", ", parts) + " selected.";
     }
 
@@ -1405,8 +1438,18 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
 
             if (commands.Count > 0)
             {
-                _undoRedo.Execute(commands.Count == 1 ? commands[0] : new CompositeCommand(commands));
-                foreach (var id in movedIds) RunAutoConnect(id);
+                // Auto-connect's wire changes are folded into the SAME undo step as the group move
+                // (see PlaceSymbolAt's identical reasoning) rather than pushed as separate stack
+                // entries — one Ctrl+Z should undo the whole group move plus whatever it bridged, not
+                // just the last wire change.
+                var moveCommand = commands.Count == 1 ? commands[0] : new CompositeCommand(commands);
+                var allCommands = new List<IUndoableCommand> { moveCommand };
+                _session.RunBatch(() =>
+                {
+                    moveCommand.Do();
+                    foreach (var id in movedIds) allCommands.AddRange(RunAutoConnect(id));
+                });
+                _undoRedo.Record(allCommands.Count == 1 ? allCommands[0] : new CompositeCommand(allCommands));
                 NotifyUndoRedoChanged();
             }
             _dragGroupOriginalPositions.Clear();
@@ -1426,8 +1469,11 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         // so MoveCommand.Do() is the single place that advances it, keeping undo/redo consistent.
         item.X = dragOriginal.X;
         item.Y = dragOriginal.Y;
-        _undoRedo.Execute(new MoveCommand(_session, this, placementId, dragOriginal.X, dragOriginal.Y, finalX, finalY));
-        RunAutoConnect(placementId);
+        var moveCmd = new MoveCommand(_session, this, placementId, dragOriginal.X, dragOriginal.Y, finalX, finalY);
+        moveCmd.Do();
+        var moveAndAutoConnect = new List<IUndoableCommand> { moveCmd };
+        moveAndAutoConnect.AddRange(RunAutoConnect(placementId));
+        _undoRedo.Record(moveAndAutoConnect.Count == 1 ? moveAndAutoConnect[0] : new CompositeCommand(moveAndAutoConnect));
         NotifyUndoRedoChanged();
         RedrawRequested?.Invoke();
     }
@@ -1520,6 +1566,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         var placementIdsToDelete = SelectedPlacementIds.Count > 1
             ? SelectedPlacementIds.ToList()
             : SelectedPlacementId is { } singleId ? [singleId] : [];
+
         foreach (var placementId in placementIdsToDelete)
         {
             var item = Placements.First(p => p.PlacementId == placementId);
@@ -1528,7 +1575,24 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
 
         if (commands.Count == 0) return;
 
-        _undoRedo.Execute(commands.Count == 1 ? commands[0] : new CompositeCommand(commands));
+        // Auto-connect's wire changes are folded into the SAME undo step as the delete itself (see
+        // PlaceSymbolAt's identical reasoning) rather than pushed as separate stack entries.
+        var deleteCommand = commands.Count == 1 ? commands[0] : new CompositeCommand(commands);
+        var allCommands = new List<IUndoableCommand> { deleteCommand };
+        _session.RunBatch(() =>
+        {
+            deleteCommand.Do();
+            // ConnectionsChanged/PlacementsChanged are deferred until the whole batch commits (see
+            // ProjectSession.RunBatch), so Connections/Placements need an explicit refresh here rather
+            // than relying on those events — RunAutoConnectForPins reads both to decide what's newly
+            // facing and unconnected. Re-checks every currently-empty pin on the page (not just the
+            // deleted placements' former neighbors) for a new facing match — e.g. deleting the middle
+            // device of a facing A-B-C chain now lets A and C connect directly.
+            RefreshFromSession();
+            ReloadConnectionsFromSession();
+            allCommands.AddRange(RunAutoConnectForPins(GetUnconnectedPinIds()));
+        });
+        _undoRedo.Record(allCommands.Count == 1 ? allCommands[0] : new CompositeCommand(allCommands));
         NotifyUndoRedoChanged();
         SelectedDefinitionPointIds.Clear();
         SelectedCableLineIds.Clear();
@@ -1551,8 +1615,11 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         {
             var item = Placements.First(p => p.PlacementId == rotateId);
             var newRotation = (item.RotationDegrees + 90) % 360;
-            _undoRedo.Execute(new RotateCommand(_session, this, rotateId, item.RotationDegrees, item.Mirrored, newRotation, item.Mirrored));
-            RunAutoConnect(rotateId);
+            var rotateCmd = new RotateCommand(_session, this, rotateId, item.RotationDegrees, item.Mirrored, newRotation, item.Mirrored);
+            rotateCmd.Do();
+            var rotateAndAutoConnect = new List<IUndoableCommand> { rotateCmd };
+            rotateAndAutoConnect.AddRange(RunAutoConnect(rotateId));
+            _undoRedo.Record(rotateAndAutoConnect.Count == 1 ? rotateAndAutoConnect[0] : new CompositeCommand(rotateAndAutoConnect));
             NotifyUndoRedoChanged();
             RedrawRequested?.Invoke();
             return;
@@ -1718,6 +1785,48 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         return null;
     }
 
+    /// <summary>Every cable line whose own body (not just a crossing tick) falls inside/touches the
+    /// given world-space rectangle — same window-vs-crossing distinction PlacementHitTester.HitTestRect
+    /// uses (requireFullContainment: both endpoints inside vs. either endpoint inside or the segment
+    /// crossing one of the rectangle's four edges). Reuses SegmentIntersection.Intersect (already built
+    /// for cable-line-crosses-wire detection) against each edge instead of new geometry.</summary>
+    private List<long> HitTestCableLinesInRect(double minX, double minY, double maxX, double maxY, bool requireFullContainment)
+    {
+        var corners = new[]
+        {
+            new WorldPoint(minX, minY), new WorldPoint(maxX, minY),
+            new WorldPoint(maxX, maxY), new WorldPoint(minX, maxY),
+        };
+
+        bool IsInside(double x, double y) => x >= minX && x <= maxX && y >= minY && y <= maxY;
+
+        var hits = new List<long>();
+        foreach (var line in CableLines)
+        {
+            var startInside = IsInside(line.X1, line.Y1);
+            var endInside = IsInside(line.X2, line.Y2);
+
+            bool hit;
+            if (requireFullContainment)
+            {
+                hit = startInside && endInside;
+            }
+            else
+            {
+                var start = new WorldPoint(line.X1, line.Y1);
+                var end = new WorldPoint(line.X2, line.Y2);
+                hit = startInside || endInside
+                    || SegmentIntersection.Intersect(start, end, corners[0], corners[1]) is not null
+                    || SegmentIntersection.Intersect(start, end, corners[1], corners[2]) is not null
+                    || SegmentIntersection.Intersect(start, end, corners[2], corners[3]) is not null
+                    || SegmentIntersection.Intersect(start, end, corners[3], corners[0]) is not null;
+            }
+
+            if (hit) hits.Add(line.Id);
+        }
+        return hits;
+    }
+
     /// <summary>Every cable line crossing whose current tick position falls inside the given
     /// world-space rectangle — the rubber-band's crossing query, same shape as HitTestDefinitionPointsInRect.</summary>
     private List<long> HitTestCableLineCrossingsInRect(double minX, double minY, double maxX, double maxY)
@@ -1834,18 +1943,86 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     /// connected pin off that line and the connection is dropped, exactly like it never auto-connects
     /// to a non-facing pin in the first place. New facing touches are still auto-connected the same
     /// way. Only runs after interactive actions, not after undo/redo of them — a deliberate scope
-    /// limit (ADR-009).
+    /// limit (ADR-009). Returns whatever Create/DeleteConnectionCommands it actually ran (already
+    /// executed, not yet pushed to any undo stack) so the caller can fold them into the SAME undo step
+    /// as the triggering place/move/rotate — see the call sites for why this matters.
     /// </summary>
-    private void RunAutoConnect(long placementId)
+    private List<IUndoableCommand> RunAutoConnect(long placementId)
     {
         var item = Placements.FirstOrDefault(p => p.PlacementId == placementId);
-        if (item is null || item.Pins.Count == 0) return;
+        if (item is null || item.Pins.Count == 0) return [];
+
+        var executed = RunAutoConnectForPins(item.Pins.Select(p => p.DevicePinId).ToHashSet());
+
+        // Breaking the moved placement's own now-misaligned connections above can leave OTHER,
+        // uninvolved placements' pins newly unconnected — e.g. dragging device 7 out of a facing
+        // 6-7-8 line frees both 6's and 8's pins, which should now be free to connect directly to
+        // each other, not just re-evaluate whatever 7 itself landed near. A second, broader pass over
+        // every currently-unconnected pin on the page catches this — the same reconciliation the
+        // delete paths already run, extended to move/rotate/place too, since none of them are really
+        // different from a page's own perspective: something's geometry changed, so anything left
+        // facing something else should connect.
+        executed.AddRange(RunAutoConnectForPins(GetUnconnectedPinIds()));
+        return executed;
+    }
+
+    /// <summary>Entry point for a delete triggered from a sidebar navigator (e.g. the Devices
+    /// Navigator's cascade-delete) rather than the canvas's own DeleteSelection — that data-layer
+    /// delete already fired PlacementsChanged/ConnectionsChanged before MainViewModel calls this, so
+    /// this page's own Placements/Connections should already be current, but refreshing explicitly
+    /// here is cheap insurance against relying on that ordering. Re-runs auto-connect against every
+    /// currently-empty pin on the page (see GetUnconnectedPinIds) rather than trying to precisely
+    /// track which specific pins the delete freed — simpler and more robust than computing that
+    /// delta, and this only runs after a delete, not on every render, so scanning the whole page's
+    /// pins each time is cheap. The resulting wire changes are deliberately NOT recorded on the undo
+    /// stack — cascade-deletes from a sidebar navigator already have no undo of their own (ADR-010),
+    /// so a side effect of one shouldn't be independently undoable via the canvas's Ctrl+Z either.</summary>
+    internal void RunAutoConnectForExternalDelete()
+    {
+        RefreshFromSession();
+        ReloadConnectionsFromSession();
+        RunAutoConnectForPins(GetUnconnectedPinIds());
+    }
+
+    /// <summary>Every pin, across every placement on this page, that isn't currently the endpoint of
+    /// any Connection — the live definition of "empty connection point," recomputed fresh from the
+    /// canvas's own in-memory Placements/Connections rather than tracked incrementally.</summary>
+    private HashSet<long> GetUnconnectedPinIds()
+    {
+        var connectedPinIds = new HashSet<long>();
+        foreach (var connection in Connections)
+        {
+            connectedPinIds.Add(connection.FromDevicePinId);
+            connectedPinIds.Add(connection.ToDevicePinId);
+        }
+
+        return Placements
+            .SelectMany(p => p.Pins.Select(pin => pin.DevicePinId))
+            .Where(id => !connectedPinIds.Contains(id))
+            .ToHashSet();
+    }
+
+    /// <summary>The pin-set generalization of RunAutoConnect above — used after a delete, where the
+    /// pins to re-evaluate (the surviving neighbors whose connection to the just-deleted placement was
+    /// just severed) don't belong to any single still-existing placement to derive them from. Unlike
+    /// the single-placement case, these pins can belong to several DIFFERENT surviving placements (e.g.
+    /// deleting the middle of a facing A-B-C chain leaves both A's and C's pins in this set) — they
+    /// must be allowed to match EACH OTHER, not just some third placement, so the "other pins" exclusion
+    /// is scoped per-pin's own placement rather than to the whole moved set (a placement's own pins
+    /// still never match each other, matching RunAutoConnect's original single-device behavior).
+    /// Every Create/DeleteConnectionCommand here runs its Do() directly rather than going through
+    /// _undoRedo.Execute — callers decide whether/how to record what actually ran (folded into the
+    /// triggering action's own undo step, or not recorded at all for a non-undoable cascade).</summary>
+    private List<IUndoableCommand> RunAutoConnectForPins(IReadOnlyCollection<long> movedPinIds)
+    {
+        var executed = new List<IUndoableCommand>();
+        if (movedPinIds.Count == 0) return executed;
 
         var allPinPositions = BuildPinPositions();
         var pinsById = allPinPositions.ToDictionary(p => p.DevicePinId);
-        var movedPinIds = item.Pins.Select(p => p.DevicePinId).ToHashSet();
-        var movedPins = allPinPositions.Where(p => movedPinIds.Contains(p.DevicePinId)).ToList();
-        var otherPins = allPinPositions.Where(p => !movedPinIds.Contains(p.DevicePinId)).ToList();
+        var placementIdByPinId = Placements
+            .SelectMany(placement => placement.Pins.Select(pin => (pin.DevicePinId, placement.PlacementId)))
+            .ToDictionary(t => t.DevicePinId, t => t.PlacementId);
 
         var brokenConnections = Connections
             .Where(c => movedPinIds.Contains(c.FromDevicePinId) || movedPinIds.Contains(c.ToDevicePinId))
@@ -1853,21 +2030,88 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
             .Where(c => !AutoConnectDetector.AreFacingEachOther(pinsById[c.FromDevicePinId], pinsById[c.ToDevicePinId]))
             .ToList();
         foreach (var connection in brokenConnections)
-            _undoRedo.Execute(new DeleteConnectionCommand(_session, this, connection));
+        {
+            var command = new DeleteConnectionCommand(_session, this, connection);
+            command.Do();
+            executed.Add(command);
+        }
 
-        var pinPositionsById = allPinPositions.ToDictionary(p => p.DevicePinId, p => p.Position);
-        var existingConnections = Connections
-            .Where(c => pinPositionsById.ContainsKey(c.FromDevicePinId) && pinPositionsById.ContainsKey(c.ToDevicePinId))
-            .Select(c => new ExistingConnection(c.ConnectionId, c.FromDevicePinId, c.ToDevicePinId,
-                OrthogonalRouter.Route(pinPositionsById[c.FromDevicePinId], pinPositionsById[c.ToDevicePinId])))
-            .ToList();
+        var createdPairs = new List<(long From, long To)>();
+        foreach (var movedPinId in movedPinIds)
+        {
+            if (!pinsById.TryGetValue(movedPinId, out var movedPin)) continue;
 
-        var newPairs = AutoConnectDetector.FindNewConnections(movedPins, otherPins, existingConnections, _session.AreConnected);
-        foreach (var (fromId, toId) in newPairs)
-            _undoRedo.Execute(new CreateConnectionCommand(_session, this, fromId, toId));
+            // Recomputed fresh each iteration: an earlier iteration in this same loop may have just
+            // created a connection (e.g. A's turn paired it with C), and the next iteration (C's turn)
+            // needs to see that via _session.AreConnected to avoid trying to recreate the same pair.
+            var currentPinPositions = BuildPinPositions();
+            var ownPlacementId = placementIdByPinId.GetValueOrDefault(movedPinId);
+            var otherPins = currentPinPositions.Where(p => placementIdByPinId.GetValueOrDefault(p.DevicePinId) != ownPlacementId).ToList();
 
-        if (brokenConnections.Count > 0 || newPairs.Count > 0)
-            StatusText = $"{newPairs.Count} wire(s) auto-connected, {brokenConnections.Count} disconnected.";
+            // AutoConnectDetector.FindNewConnections runs two independent checks per moved pin: nearest
+            // facing pin, AND a separate "does this pin's position land on some OTHER connection's
+            // route" (T-junction) match — the two aren't reconciled with each other, so a single pin can
+            // get matched by both at once (to two different targets), and the second check has no
+            // placement-awareness, so it can also match a pin's own sibling once this loop has created a
+            // connection whose route happens to pass through it (confirmed live: duplicate/conflicting
+            // connections, including a device wired to its own other pin). The T-junction check isn't
+            // used by anything else in the app (this is FindNewConnections' only caller) and directly
+            // conflicts with the "one pin, one connection, replacing an old one when bridged" model this
+            // re-scan is meant to implement — passing no existing connections disables that check
+            // entirely, leaving only the plain nearest-facing-pin match.
+            var existingConnections = new List<ExistingConnection>();
+
+            var newPairs = AutoConnectDetector.FindNewConnections([movedPin], otherPins, existingConnections, _session.AreConnected);
+            foreach (var (fromId, toId) in newPairs)
+            {
+                var command = new CreateConnectionCommand(_session, this, fromId, toId);
+                command.Do();
+                executed.Add(command);
+                createdPairs.Add((fromId, toId));
+            }
+        }
+
+        // A device landing between two others that were already directly wired to each other (e.g.
+        // dropping device 8 between an already-connected 6-7) gets its own two new connections above
+        // (6-8, 8-7) via the ordinary nearest-facing-pin search — but the old direct 6-7 wire is never
+        // touched by that search, since neither of ITS pins moved. That leaves a redundant/incorrect
+        // extra wire running straight through the new device. Detect it here: whenever this call
+        // created two or more new connections that share one placement (the thing that just moved) but
+        // land on two DIFFERENT external pins, those two external pins having a pre-existing direct
+        // connection to each other means that connection is now bridged through the new placement and
+        // should be removed rather than left in place alongside the new pair.
+        var externalPinsByMovedPlacement = createdPairs
+            .SelectMany(pair => new[] { (Moved: pair.From, External: pair.To), (Moved: pair.To, External: pair.From) })
+            .Where(t => movedPinIds.Contains(t.Moved))
+            .GroupBy(t => placementIdByPinId.GetValueOrDefault(t.Moved))
+            .Where(g => g.Count() >= 2);
+
+        foreach (var group in externalPinsByMovedPlacement)
+        {
+            var externals = group.Select(t => t.External).Distinct().ToList();
+            for (var i = 0; i < externals.Count; i++)
+            {
+                for (var j = i + 1; j < externals.Count; j++)
+                {
+                    var redundant = Connections.FirstOrDefault(c =>
+                        (c.FromDevicePinId == externals[i] && c.ToDevicePinId == externals[j]) ||
+                        (c.FromDevicePinId == externals[j] && c.ToDevicePinId == externals[i]));
+                    if (redundant is null) continue;
+
+                    var command = new DeleteConnectionCommand(_session, this, redundant);
+                    command.Do();
+                    executed.Add(command);
+                }
+            }
+        }
+
+        if (executed.Count > 0)
+        {
+            var created = executed.Count(c => c is CreateConnectionCommand);
+            StatusText = $"{created} wire(s) auto-connected, {executed.Count - created} disconnected.";
+        }
+
+        return executed;
     }
 
     /// <summary>
@@ -1881,13 +2125,24 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     /// <summary>Re-queries this page's placements from the DB and syncs each surviving view item's
     /// tag/segments/sibling labels (Section 5.4) — not position/rotation, which only ever change via
     /// this window's own Move/Rotate commands. Called after any local place/attach/delete/rename, on
-    /// undo/redo, and whenever ProjectSession.PlacementsChanged fires from elsewhere.</summary>
+    /// undo/redo, and whenever ProjectSession.PlacementsChanged fires from elsewhere — including a
+    /// Devices Navigator cascade-delete of a Device whose placements include one on this exact page,
+    /// which this window never routed through its own RemovePlacementFromView. Removes any view item
+    /// missing from the fresh DB result (rather than only skipping it) so that placement doesn't linger
+    /// as a selectable "ghost" whose further deletion would throw (the placement is already gone).</summary>
     private void RefreshFromSession()
     {
         var fresh = _session.GetPlacements(_page.Id).ToDictionary(p => p.PlacementId, p => p);
-        foreach (var item in Placements)
+        for (var i = Placements.Count - 1; i >= 0; i--)
         {
-            if (!fresh.TryGetValue(item.PlacementId, out var placement)) continue;
+            var item = Placements[i];
+            if (!fresh.TryGetValue(item.PlacementId, out var placement))
+            {
+                Placements.RemoveAt(i);
+                SelectedPlacementIds.Remove(item.PlacementId);
+                if (SelectedPlacementId == item.PlacementId) SelectedPlacementId = null;
+                continue;
+            }
             item.DeviceTag = placement.DeviceTag;
             item.Function = placement.FunctionSegment;
             item.Location = placement.LocationSegment;
@@ -1945,6 +2200,18 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         SelectedDefinitionPointIds.Clear();
         SelectedDefinitionPointIds.Add(definitionPointId);
         _pendingCenterWorldPoint = (point.X, point.Y);
+        RedrawRequested?.Invoke();
+    }
+
+    /// <summary>Selects a cable line already on this page and centers on its midpoint — the Cables
+    /// Navigator's "highlight on canvas" target, same shape as FocusDefinitionPoint/FocusPlacement.</summary>
+    internal void FocusCableLine(long cableLineId)
+    {
+        var line = CableLines.FirstOrDefault(c => c.Id == cableLineId);
+        if (line is null) return;
+        SelectedCableLineIds.Clear();
+        SelectedCableLineIds.Add(cableLineId);
+        _pendingCenterWorldPoint = ((line.X1 + line.X2) / 2, (line.Y1 + line.Y2) / 2);
         RedrawRequested?.Invoke();
     }
 
@@ -2211,6 +2478,12 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
     /// events.</summary>
     private void OnSessionCableLinesChanged() => ReloadCableLinesFromSession();
 
+    /// <summary>Fired by ProjectSession.CablesChanged — a Cable delete cascades away any CableLine/
+    /// CableLineCrossing that referenced it (schema FK, ON DELETE CASCADE), but without this the
+    /// canvas never learned to drop it from its own in-memory CableLines collection, so a
+    /// Cables-Navigator delete left the drawn line stranded on an already-open page.</summary>
+    private void OnSessionCablesChanged() => ReloadCableLinesFromSession();
+
     /// <summary>The wire line color, read live from Settings > Preferences (default red) — resolved
     /// fresh on every repaint rather than cached, so a change in the Settings dialog is visible on this
     /// page's very next paint without needing to reopen it.</summary>
@@ -2258,6 +2531,7 @@ public partial class SchematicPageViewModel : ObservableObject, IDisposable
         _session.ConnectionsChanged -= OnSessionConnectionsChanged;
         _session.DefinitionPointsChanged -= OnSessionDefinitionPointsChanged;
         _session.CableLinesChanged -= OnSessionCableLinesChanged;
+        _session.CablesChanged -= OnSessionCablesChanged;
         AppSettingsStore.SettingsChanged -= OnAppSettingsChanged;
         foreach (var svg in _svgCache.Values) svg.Dispose();
         _svgCache.Clear();

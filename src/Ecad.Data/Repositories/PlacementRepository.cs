@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using Ecad.Core.Models;
 using Microsoft.Data.Sqlite;
@@ -26,7 +27,7 @@ public class PlacementRepository(SqliteConnection connection)
         return InsertSymbol(new Symbol { Name = name, LibraryName = libraryName, SvgFilePath = svgFilePath, Category = category });
     }
 
-    public long InsertPlacement(Placement placement)
+    public long InsertPlacement(Placement placement, IDbTransaction? transaction = null)
     {
         return connection.ExecuteScalar<long>(
             """
@@ -34,7 +35,7 @@ public class PlacementRepository(SqliteConnection connection)
             VALUES (@DeviceId, @PageId, @SymbolId, @X, @Y, @RotationDegrees, @Mirrored, @Variant)
             RETURNING Id;
             """,
-            placement);
+            placement, transaction);
     }
 
     public Placement? GetPlacement(long id)
@@ -44,21 +45,21 @@ public class PlacementRepository(SqliteConnection connection)
 
     /// <summary>Deletes just this Placement row; PlacementPin rows cascade. Does not touch the Device
     /// or its DevicePins — callers decide separately whether those should be cleaned up too (M6).</summary>
-    public void DeletePlacement(long placementId)
+    public void DeletePlacement(long placementId, IDbTransaction? transaction = null)
     {
-        connection.Execute("DELETE FROM Placement WHERE Id = @placementId;", new { placementId });
+        connection.Execute("DELETE FROM Placement WHERE Id = @placementId;", new { placementId }, transaction);
     }
 
-    public void UpdatePosition(long placementId, double x, double y)
+    public void UpdatePosition(long placementId, double x, double y, IDbTransaction? transaction = null)
     {
-        connection.Execute("UPDATE Placement SET X = @x, Y = @y WHERE Id = @placementId;", new { placementId, x, y });
+        connection.Execute("UPDATE Placement SET X = @x, Y = @y WHERE Id = @placementId;", new { placementId, x, y }, transaction);
     }
 
-    public void UpdateRotation(long placementId, int rotationDegrees, bool mirrored)
+    public void UpdateRotation(long placementId, int rotationDegrees, bool mirrored, IDbTransaction? transaction = null)
     {
         connection.Execute(
             "UPDATE Placement SET RotationDegrees = @rotationDegrees, Mirrored = @mirrored WHERE Id = @placementId;",
-            new { placementId, rotationDegrees, mirrored });
+            new { placementId, rotationDegrees, mirrored }, transaction);
     }
 
     /// <summary>All placements on a page, joined with their Device tag and Symbol info — everything the canvas needs to render the page.</summary>
@@ -170,13 +171,32 @@ public class PlacementRepository(SqliteConnection connection)
         return row is null ? null : new SiblingPlacementRef(row.PlacementId, row.PageId, row.PageNumberSegment ?? $"#{row.PageId}");
     }
 
+    /// <summary>Every Placement of this Device across every page, each with its PageId — the
+    /// Devices/Interruption Points Navigator's "highlight on canvas" target, since a multi-placement
+    /// Device can need highlighting across several simultaneously-open page tabs at once, not just the
+    /// single earliest one GetFirstPlacementForDevice resolves for jump-to-page.</summary>
+    public IReadOnlyList<SiblingPlacementRef> GetPlacementRefsForDevice(long deviceId)
+    {
+        var rows = connection.Query<SiblingPlacementRow>(
+            """
+            SELECT p.Id AS PlacementId, p.PageId, pg.PageNumberSegment
+            FROM Placement p
+            JOIN Page pg ON pg.Id = p.PageId
+            WHERE p.DeviceId = @deviceId
+            ORDER BY pg.SortOrder, pg.Id, p.Id;
+            """,
+            new { deviceId });
+
+        return rows.Select(r => new SiblingPlacementRef(r.PlacementId, r.PageId, r.PageNumberSegment ?? $"#{r.PageId}")).ToList();
+    }
+
     /// <summary>
     /// Deletes the DevicePins this placement exposes that no other placement also exposes — the
     /// pins "exclusive" to this placement (e.g. a contact block's 13/14, not shared with the coil's
     /// A1/A2). Must run before the Placement itself is deleted (its own PlacementPin rows are what
     /// this query checks against). Pins still referenced by a sibling placement are left alone.
     /// </summary>
-    public void DeleteExclusiveDevicePinsForPlacement(long placementId)
+    public void DeleteExclusiveDevicePinsForPlacement(long placementId, IDbTransaction? transaction = null)
     {
         connection.Execute(
             """
@@ -188,14 +208,14 @@ public class PlacementRepository(SqliteConnection connection)
                 SELECT DevicePinId FROM PlacementPin WHERE PlacementId != @placementId
             );
             """,
-            new { placementId });
+            new { placementId }, transaction);
     }
 
-    public long AddPlacementPin(long placementId, long devicePinId)
+    public long AddPlacementPin(long placementId, long devicePinId, IDbTransaction? transaction = null)
     {
         return connection.ExecuteScalar<long>(
             "INSERT INTO PlacementPin (PlacementId, DevicePinId) VALUES (@placementId, @devicePinId) RETURNING Id;",
-            new { placementId, devicePinId });
+            new { placementId, devicePinId }, transaction);
     }
 
     /// <summary>

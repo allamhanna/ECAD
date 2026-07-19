@@ -727,3 +727,114 @@ Opens a `SaveFileDialog` (same `"ECAD Project (*.ecad)|*.ecad"` filter every oth
 - The performance stress-test (the third and last M14 workstream) remains open.
 
 ---
+
+## ADR-029: Performance Stress-Test Tool, and Fixing the One Real Bottleneck It Found
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+The last of M14's three hardening workstreams. REQUIREMENTS targets "hundreds of symbols/lines per page" but this had never been measured against anything. Needed: a way to generate a synthetic page past that scale, and a way to see actual frame timing without re-instrumenting each time.
+
+**Decision — a kept dev tool, not a throwaway script, plus a permanent on-screen diagnostic:**
+Confirmed with the user: `Developer > Generate Stress-Test Page` (`StressTestGenerator`) stays in the app for future reuse as more milestones land, rather than being a one-off script. It lays out ~300 `Terminal` placements across 20 vertical chains (loaded via the exact same `SymbolLibraryLoader`/argument shape `PlaceSymbolCommand` uses, so it renders through the real path, not a shortcut), wires them, and adds ~140 definition points and ~25 cable lines — past the 500-element target. A small always-on frame-timing overlay (`SchematicPageViewModel.FrameDiagnosticsText`, fed by two `Stopwatch`s wrapping `SchematicPageView.OnPaintSurface`'s rebuild/render calls) stays in the corner of every canvas permanently — cheap enough to leave on, and means a future perf regression is visible without adding instrumentation again.
+
+**Finding and fix — `JunctionDetector` was O(n²):**
+First measurement: ~16.7ms rebuild + 3ms render per frame during a drag, at 285 connections. `JunctionDetector.FindJunctions`'s T-junction check (a point landing strictly inside another connection's route) was an all-pairs scan — every candidate endpoint against every connection's route. Since every `OrthogonalRouter` route is horizontal/vertical-only, segments can be indexed by their constant coordinate (Y for a horizontal segment, X for a vertical one) so a candidate point only re-checks the handful of segments that could possibly contain it, instead of every connection in the project. Rewrote it that way — same exact geometric test (`AutoConnectDetector.IsPointStrictlyOnPolyline`), just against a filtered candidate list. Re-measured: 6ms rebuild, ~2.8x faster. `JunctionDetectorTests` passed unmodified — pure internal restructuring, no behavior change.
+
+**Consequences:**
+- The generator's own first version took ~30 seconds and froze the UI while writing itself — not a rendering problem, a bulk-write-throughput one (confirmed: ~750 individual `ProjectSession` calls, each its own auto-committed SQLite write). This directly motivated ADR-030's transaction-batching work rather than being patched in isolation.
+- 240 tests passing (unchanged — internal restructuring plus dev tooling, no test-visible behavior change).
+- This completes M14 (Hardening) — all three workstreams (shortcuts, backup, performance) done.
+
+---
+
+## ADR-030: Bulk-Write Transaction Batching, and Three Live-Testing Fixes Found Alongside It
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+The stress-test generator's own ~30-second freeze (ADR-029) plus a live-reported ~10-second freeze deleting many selected placements both traced to the same root cause: `ProjectSession` has no transaction batching anywhere — every mutating method is its own separate auto-committed SQLite write (confirmed: no WAL, `synchronous=FULL`, so every commit is a real fsync). N writes in a loop is N fsyncs, not one.
+
+**Decision — `ProjectSession.RunBatch(Action)`, an ambient transaction with deferred change events:**
+```csharp
+public void RunBatch(Action batch)
+{
+    if (_batchTransaction is not null) { batch(); return; } // nested call joins the outer batch
+    using var transaction = _connection.BeginTransaction();
+    _batchTransaction = transaction;
+    ...
+    try { batch(); transaction.Commit(); } catch { transaction.Rollback(); throw; }
+    finally { _batchTransaction = null; }
+    if (_placementsDirty) PlacementsChanged?.Invoke();
+    if (_connectionsDirty) ConnectionsChanged?.Invoke();
+}
+```
+Every participating method (`MovePlacement`, `RotatePlacement`, `PlaceSymbol`/`PlaceSymbolOnExistingDevice`, `DeletePlacement`/`DeletePlacementCore`, `DeleteDeviceCascade`, and later `CreateConnection`/`DeleteConnection`) passes its own `_batchTransaction` field (null outside a batch — today's exact behavior, unchanged) to its repository calls instead of omitting it, and swaps a direct `PlacementsChanged?.Invoke()`/`ConnectionsChanged?.Invoke()` for `RaisePlacementsChanged()`/`RaiseConnectionsChanged()`, which defer to the dirty flags when a batch is active. No public method signatures changed — `RunBatch` is the only new public surface.
+
+**Verified, not assumed — Microsoft.Data.Sqlite's transaction scoping:** built a throwaway probe against the real package version (10.0.9) confirming a command issued on a connection with a pending transaction joins it automatically even without `cmd.Transaction` being set explicitly, and a `Rollback()` correctly reverts writes made that way too. This meant the ~8 repository methods needing an optional `IDbTransaction? transaction = null` parameter (matching `PartRepository`'s own established pattern) only needed it for clarity/consistency, not correctness — but added it anyway, since relying on implicit connection-scoping without being explicit about it would be the kind of thing that reads as an accident later.
+
+**Consequences:**
+- `SchematicPageViewModel`'s 4 undo/redo call sites (group move, single delete's `Execute`, `Undo()`, `Redo()`) and `StressTestGenerator`'s whole body now wrap in `RunBatch` — fixing the generator's own ~30s freeze for free, no separate design needed.
+- 4 new `ProjectSessionRunBatchTests` (commit-all-together, rollback-on-exception, single-fire-not-per-write, and confirming a call outside any batch still fires immediately as before) — 238 tests passing (up from 234).
+
+**Three more live-testing bugs found and fixed the same day, unrelated to batching but reported in the same session:**
+1. **Cables Navigator delete left the drawn cable-line on canvas.** Not a data bug — the schema's own `ON DELETE CASCADE` already removes `CableLine`/`CableLineCrossing` rows. `SchematicPageViewModel` just never subscribed to `ProjectSession.CablesChanged` (it had `PlacementsChanged`/`ConnectionsChanged`/`DefinitionPointsChanged`/`CableLinesChanged` but not this one) — added the subscription, reusing the existing `ReloadCableLinesFromSession()`.
+2. **A cascade-deleted device left a "ghost" placement on an already-open canvas tab**, which then crashed (`Placement N not found`) if the user tried to interact with it. Root cause: `RefreshFromSession()` (bound to `PlacementsChanged`) only ever updated placements still present in the DB, never removed ones that had disappeared — the one asymmetry against `ReloadConnectionsFromSession()`'s proper clear-and-rebuild. Fixed to prune any view item missing from the fresh result, clearing it from selection too.
+3. **Rubber-band selection couldn't select a whole cable-definition-line's body**, only its individual crossing ticks. New `HitTestCableLinesInRect`, same window/crossing distinction `PlacementHitTester.HitTestRect` already uses for placements, reusing `SegmentIntersection.Intersect` against the rectangle's four edges instead of new geometry.
+
+---
+
+## ADR-031: Two-Way Navigator↔Canvas Highlighting, and Auto-Connect After Delete (First Pass)
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+Two user requests landed together: (1) selecting a device/cable/connection/termination row should highlight its counterpart on any already-open canvas tab, and vice versa, across all five sidebar navigators — confirmed explicitly as "all 5 now," not just Devices; (2) deleting a device on the canvas that leaves two other devices facing each other on the same line (with nothing between them anymore) should auto-connect them, the same way place/move/rotate already do.
+
+**Decision — canvas→navigator sync piggybacks on the existing `RedrawRequested` event, no new event added:**
+`MainViewModel` subscribes to each opened tab's `viewModel.RedrawRequested` (already fired by every selection-changing action on the canvas, plus every drag mouse-move) and, on each firing, checks the canvas's current single-selection state in priority order (placement, then cable line, then definition point) and pushes the matching entity into whichever navigator(s) list it. Costs nothing extra to check redundantly during a drag; avoided touching the dozen-plus existing selection-mutation call sites in `SchematicPageViewModel`.
+
+**Decision — navigator→canvas reuses each navigator's existing single-selection property where one exists:**
+`CablesGridViewModel.SelectedCable` already drove the Cores sub-grid and was already bound to the DataGrid's `SelectedItem` — reused directly (its existing `OnSelectedCableChanged` hook now also raises `CableHighlightRequested`) rather than adding a parallel property that would need to fight the existing XAML binding. `DevicesGridViewModel`/`ConnectionsGridViewModel`/`TerminationsGridViewModel` had no such property, so each gained a fresh `Highlighted*` (`HighlightedDevice`/`HighlightedConnection`/`HighlightedTermination`) bound to `SelectedItem`, whose `[ObservableProperty]`-generated `On...Changed` hook raises the matching `*HighlightRequested` event. `MainViewModel` resolves every open tab that could show the entity (new `ProjectSession.GetPlacementRefsForDevice`/`GetCableLinesForCable`, reusing `GetConnectionPage`/`GetDefinitionPointForConnection` for Connections/Terminals) and calls the existing `FocusPlacement`/`FocusDefinitionPoint`, plus a new `FocusCableLine` (same shape). Deliberately never switches tabs (`SelectedTab` untouched) — this is a passive highlight, not the double-click navigation that already exists.
+
+**Decision — a reentrancy guard so a tab never re-centers itself:**
+Setting a `Highlighted*` property from the canvas-sync direction also fires its own changed-hook, which would otherwise bounce straight back and re-focus the very tab whose selection triggered the sync — harmless for a plain click, but visibly wrong after a *move*, since `FocusPlacement` re-centers on the placement's new position even though the user never asked to jump anywhere, they just dragged something within their current view. `MainViewModel._syncingHighlightFromCanvas` tracks which tab is currently being synced *from*; the three `Highlight*OnCanvas` methods skip re-focusing that exact tab while it's set, while still correctly focusing any other genuinely different open tab showing the same entity.
+
+**Decision — auto-connect after delete, first (incomplete — see ADR-032) design:**
+`SchematicPageViewModel.RunAutoConnect(placementId)`'s core logic generalized into `RunAutoConnectForPins(IReadOnlyCollection<long>)`, taking an arbitrary pin set instead of deriving it from one still-existing placement — needed since a delete's "moved" pins belong to placements that survived, not the one that just disappeared. `DeleteSelection()` (canvas) and a new `DevicesGridViewModel.DevicesCascadeDeletedOnPages` event (Devices Navigator) both call it after their respective deletes complete.
+
+**Consequences:**
+- 2 new `Ecad.Data.Tests` (`GetPlacementRefsForDevice`, `GetCableLinesForCable`) — 240 tests passing.
+- The auto-connect-after-delete design above shipped but turned out to have real remaining bugs, found only through further live testing — see ADR-032 for the full account and the actual fixes.
+
+---
+
+## ADR-032: Auto-Connect Correctness — Five Rounds to the Actual Root Causes
+
+**Status:** Accepted (2026-07-19)
+
+**Context:**
+ADR-031's first auto-connect-after-delete pass did not work when the user tested it live, and neither did three subsequent attempts to fix it. This ADR records the full debugging path because each round looked plausible and passed reasoning-only review, and the actual causes were only found through direct evidence — worth remembering as a caution against trusting code review alone for this kind of live, stateful, hard-to-reproduce-remotely bug.
+
+**Round 1 — wrong exclusion scope:** the first `RunAutoConnectForPins` excluded every pin in the whole "moved" set from being a candidate match for every other pin in that same set — correct for the original single-placement case (a device's own two pins shouldn't match each other) but wrong once the set could span *several different* surviving placements (deleting a middle device of a facing A-B-C chain puts both A's and C's pins in the set, and they need to match *each other*). Fixed by scoping the exclusion to each pin's own placement rather than the whole batch.
+
+**Round 2 — a second, independent detection mechanism nobody had accounted for:** still didn't work after Round 1. Confirmed by temporary file-based logging (`DebugLogAutoConnect`, appending to a `%TEMP%` file so evidence could be inspected directly rather than relayed secondhand) that `AutoConnectDetector.FindNewConnections` runs two *unreconciled* checks per pin: nearest-facing-pin, and a separate mid-span "T-junction" check (does this pin's position land on some *other* connection's route). The second check has no placement-awareness at all, so once one iteration of the loop created a connection whose route happened to pass through a pin's own sibling, that sibling could get wired to itself. Confirmed live in the log: a device connected to its own second pin, and one pin connected to two different targets at once. Fixed by disabling the T-junction check for this use entirely (passing an empty existing-connections list into `FindNewConnections`) — it has no other caller anywhere in the app, and directly conflicted with the "one pin, one connection" model this feature needs.
+
+**Round 3 — the "redundant bridge" case, and the actual undo-experience bug:** a device inserted between two already-connected devices correctly got its two new bridging connections (Round 2's fix confirmed this), but the old direct link between the two outer devices stayed, and — after ruling out geometry entirely via an independent agent's synthetic reproduction against the real `ProjectSession` — an exhaustive, adversarial re-audit of the whole pipeline (a fresh review, explicitly told to verify every claim rather than trust prior findings) found the actual reason live testing kept looking broken: **every wire `RunAutoConnectForPins` created or deleted was pushed onto the undo stack as its own separate entry**, never bundled with the move/place/rotate/delete that triggered it. One Ctrl+Z — completely normal to reach for while iterating on a test scenario — only undid the *last* wire-level side effect, not the actual action, leaving wiring in a state that was never real at any point the user asked for. This is very likely why several "fixed" rounds still looked broken in subsequent live testing.
+
+**Decision — record auto-connect's side effects as part of the triggering action's own undo step:**
+`UndoRedoStack` gained `Record(IUndoableCommand)` — push an already-executed command without re-running its `Do()` — alongside the existing `Execute` (run-then-push). `RunAutoConnectForPins`/`RunAutoConnect` now call `.Do()` directly on every `Create`/`DeleteConnectionCommand` they use and *return* the list instead of pushing it themselves; every call site (place, single move, group move, rotate, canvas delete) builds one `CompositeCommand` from the triggering command plus whatever auto-connect returned, and records that as a single step. The Devices-Navigator delete path and the page-open reconciliation (below) deliberately discard the returned list instead of recording it — cascade-deletes from a sidebar navigator already have no undo of their own (ADR-010), so a side effect of one shouldn't be independently undoable via the canvas's Ctrl+Z either.
+
+**Also fixed alongside Round 3, both confirmed as real deviations during the same audit:**
+- `ProjectSession.CreateConnection`/`DeleteConnection` were the only Connection-mutating methods not participating in `RunBatch`'s deferred-event pattern every other batched method already used (ADR-030) — fixed to thread `_batchTransaction` and use `RaiseConnectionsChanged()`.
+- A Devices-Navigator delete on a page that wasn't open in any tab at the time permanently skipped auto-connect for it — not just "not yet," genuinely never, since opening a page later never re-ran the check. Fixed by running `RunAutoConnectForPins(GetUnconnectedPinIds())` once, discarded (not undo-tracked), whenever a page is opened — closes the gap regardless of *why* a page might be out of sync, not just this one cause.
+
+**Round 4 — one more genuinely distinct gap, found only after Round 3 was confirmed working for delete:** dragging a device *out* of a connected line (not deleting it) correctly broke its own now-misaligned connections, but nothing re-checked whether the two newly-orphaned neighbors should now connect to *each other* — `RunAutoConnect(placementId)` only ever considered the *moved* placement's own pins as candidates, never the wider page, the same class of gap Round 1 fixed for delete but never extended to move/rotate/place. Fixed by having `RunAutoConnect` run a second, broader pass over every currently-unconnected pin on the page (`GetUnconnectedPinIds()`) after its own narrow pass — unifying move/rotate/place with the exact reconciliation delete already had, rather than maintaining two different scopes for what is conceptually the same "something's geometry changed, re-check what's left facing what" operation.
+
+**Consequences:**
+- `AutoConnectDetector.AreFacingEachOther`/`FindNewConnections`'s core geometry was correct through every round (confirmed early via its own unit tests, and never touched) — all five rounds were bugs in the orchestration around it, not the detection rule itself.
+- All temporary debug logging removed once the final round was confirmed working live.
+- 240 tests passing throughout this whole sequence (all App-layer ViewModel/orchestration changes plus one `Ecad.Rendering.UndoRedoStack` addition — no data-layer behavior changed, so no new data-layer tests were needed).
+- User confirmed both the delete-reconnect and move-out-reconnect scenarios working live at the end of this sequence.
+
+---

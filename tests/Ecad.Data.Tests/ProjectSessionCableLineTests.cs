@@ -59,6 +59,23 @@ public class ProjectSessionCableLineTests
     }
 
     [Fact]
+    public void GetCableLinesForCable_ReturnsEveryLineDrawnForThatCable()
+    {
+        using var file = new TempSqliteFile();
+        var (session, page, conn1, conn2) = SetUpTwoConnections(file);
+        using var s = session;
+        var firstLine = s.DrawCableLine(page.Id, 10, -10, 10, 10, "-W1", [conn1]);
+        s.DrawCableLine(page.Id, 90, -10, 90, 10, "-W1", [conn2]);
+        var cableId = s.GetAllCables().Single().Id;
+
+        var lines = s.GetCableLinesForCable(cableId);
+
+        Assert.Equal(2, lines.Count);
+        Assert.All(lines, l => Assert.Equal(cableId, l.CableId));
+        Assert.Contains(lines, l => l.Id == firstLine.CableLineId);
+    }
+
+    [Fact]
     public void DrawCableLine_ConnectionAlreadyAssignedToDifferentCable_IsSkipped()
     {
         using var file = new TempSqliteFile();

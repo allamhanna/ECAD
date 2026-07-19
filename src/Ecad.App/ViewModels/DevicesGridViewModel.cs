@@ -58,6 +58,30 @@ public sealed partial class DevicesGridViewModel : ObservableObject, IDisposable
     /// MainViewModel to the same OpenOrFocusPageTab entry point cross-reference navigation uses.</summary>
     public event Action<long, long>? NavigateToPageRequested;
 
+    /// <summary>Two-way canvas↔navigator highlight sync: bound to the DataGrid's SelectedItem (in
+    /// addition to the existing SelectedDevices multi-select, which stays code-behind driven) so a row
+    /// click sets this directly, and MainViewModel can push a canvas selection into it the same way.
+    /// Distinct from SelectedDevices on purpose — this is a passive highlight signal, not the
+    /// bulk-operation selection set those commands act on.</summary>
+    [ObservableProperty]
+    private DeviceRow? _highlightedDevice;
+
+    /// <summary>Raised whenever HighlightedDevice settles on an actual row — either from the user
+    /// clicking it (via the SelectedItem binding) or MainViewModel pushing a canvas-side selection in;
+    /// MainViewModel subscribes to highlight the matching placement(s) on any open canvas tab.</summary>
+    public event Action<long>? DeviceHighlightRequested;
+
+    partial void OnHighlightedDeviceChanged(DeviceRow? value)
+    {
+        if (value is not null) DeviceHighlightRequested?.Invoke(value.Id);
+    }
+
+    /// <summary>Raised right after DeleteSelected's cascade-delete completes, carrying every page any
+    /// of the deleted devices had a placement on — MainViewModel re-runs auto-connect (against
+    /// whatever's currently unconnected) on whichever of those pages is open in a canvas tab, the same
+    /// check the canvas's own delete already does, extended to a delete triggered from this list.</summary>
+    public event Action<IReadOnlyList<long>>? DevicesCascadeDeletedOnPages;
+
     /// <summary>interruptionPointsOnly selects which of the two exact-complement data sources this
     /// instance shows — MainViewModel creates one instance of each (DevicesNavigator/
     /// InterruptionPointsNavigator), sharing every command/dialog since renaming, Part-assigning, and
@@ -103,7 +127,12 @@ public sealed partial class DevicesGridViewModel : ObservableObject, IDisposable
             "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes) return;
 
-        foreach (var device in SelectedDevices.ToList()) _session.DeleteDeviceCascade(device.Id);
+        var deviceIds = SelectedDevices.Select(d => d.Id).ToList();
+        var affectedPageIds = _session.GetPageIdsForDevices(deviceIds);
+
+        foreach (var id in deviceIds) _session.DeleteDeviceCascade(id);
+
+        if (affectedPageIds.Count > 0) DevicesCascadeDeletedOnPages?.Invoke(affectedPageIds);
     }
 
     /// <summary>Resolves the selected Library Part into this project's own cached copy first

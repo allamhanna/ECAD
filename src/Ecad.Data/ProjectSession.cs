@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.RegularExpressions;
 using Ecad.Core.Enums;
 using Ecad.Core.Models;
@@ -24,6 +25,17 @@ public sealed class ProjectSession : IDisposable
     private readonly PartRepository _parts;
     private readonly GeneratedReportRepository _generatedReports;
     private readonly List<Page> _pages;
+
+    // Every ProjectSession write is its own separate auto-committed statement by default (a real
+    // fsync each, no WAL) — fine for a single edit, but N writes in a loop (deleting/recreating many
+    // placements at once) turned into N-times-slower wall clock in practice. RunBatch lets a caller
+    // wrap several of these calls in one transaction; participating methods below pass this field
+    // (null outside a batch — today's unchanged behavior) to their repository calls instead of
+    // omitting it, and defer their change-event firing via RaisePlacementsChanged/
+    // RaiseConnectionsChanged until the whole batch commits.
+    private IDbTransaction? _batchTransaction;
+    private bool _placementsDirty;
+    private bool _connectionsDirty;
 
     private ProjectSession(string filePath, SqliteConnection connection, Project project, List<Page> pages)
     {
@@ -78,6 +90,58 @@ public sealed class ProjectSession : IDisposable
     /// appearing/disappearing (or being reused on regeneration) needs to reach MainViewModel's Pages
     /// list and any open tab, same cross-window live-sync pattern as the other *Changed events.</summary>
     public event Action? PagesChanged;
+
+    /// <summary>
+    /// Runs several writes as one SQLite transaction instead of each auto-committing (fsync-ing)
+    /// separately — the difference between, e.g., deleting 100 selected placements taking a fraction
+    /// of a second instead of several seconds. Participating methods (MovePlacement, RotatePlacement,
+    /// PlaceSymbol/PlaceSymbolOnExistingDevice, DeletePlacement, DeleteDeviceCascade) pick up
+    /// _batchTransaction internally and defer their own change events to fire once here, after commit,
+    /// instead of once per call. Nests safely (a RunBatch call from inside another just runs directly,
+    /// joining the outer transaction) — not currently exercised, but harmless if it ever is.
+    /// </summary>
+    public void RunBatch(Action batch)
+    {
+        if (_batchTransaction is not null)
+        {
+            batch();
+            return;
+        }
+
+        using var transaction = _connection.BeginTransaction();
+        _batchTransaction = transaction;
+        _placementsDirty = false;
+        _connectionsDirty = false;
+        try
+        {
+            batch();
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+        finally
+        {
+            _batchTransaction = null;
+        }
+
+        if (_placementsDirty) PlacementsChanged?.Invoke();
+        if (_connectionsDirty) ConnectionsChanged?.Invoke();
+    }
+
+    private void RaisePlacementsChanged()
+    {
+        if (_batchTransaction is null) PlacementsChanged?.Invoke();
+        else _placementsDirty = true;
+    }
+
+    private void RaiseConnectionsChanged()
+    {
+        if (_batchTransaction is null) ConnectionsChanged?.Invoke();
+        else _connectionsDirty = true;
+    }
 
     /// <summary>Creates a new .ecad file at the given path and inserts the given Project as its single Project row.</summary>
     public static ProjectSession Create(string filePath, Project project)
@@ -225,7 +289,7 @@ public sealed class ProjectSession : IDisposable
         var deviceId = _devices.InsertDevice(new Device
         {
             ProjectId = CurrentProject.Id, FunctionSegment = function, LocationSegment = location, DeviceTagSegment = deviceTag,
-        });
+        }, _batchTransaction);
         return PlaceSymbolOnDevice(deviceId, pageId, symbolName, symbolLibraryName, symbolSvgFilePath, symbolCategory, pinNames, x, y);
     }
 
@@ -246,15 +310,15 @@ public sealed class ProjectSession : IDisposable
 
         var devicePinIds = new List<long>();
         foreach (var pinName in pinNames)
-            devicePinIds.Add(_devices.InsertDevicePin(new DevicePin { DeviceId = deviceId, Name = pinName }));
+            devicePinIds.Add(_devices.InsertDevicePin(new DevicePin { DeviceId = deviceId, Name = pinName }, _batchTransaction));
 
         var placement = new Placement { DeviceId = deviceId, PageId = pageId, SymbolId = symbolId, X = x, Y = y };
-        placement.Id = _placements.InsertPlacement(placement);
+        placement.Id = _placements.InsertPlacement(placement, _batchTransaction);
 
         foreach (var devicePinId in devicePinIds)
-            _placements.AddPlacementPin(placement.Id, devicePinId);
+            _placements.AddPlacementPin(placement.Id, devicePinId, _batchTransaction);
 
-        PlacementsChanged?.Invoke();
+        RaisePlacementsChanged();
         return placement;
     }
 
@@ -351,10 +415,10 @@ public sealed class ProjectSession : IDisposable
         PlacementsChanged?.Invoke();
     }
 
-    public void MovePlacement(long placementId, double x, double y) => _placements.UpdatePosition(placementId, x, y);
+    public void MovePlacement(long placementId, double x, double y) => _placements.UpdatePosition(placementId, x, y, _batchTransaction);
 
     public void RotatePlacement(long placementId, int rotationDegrees, bool mirrored) =>
-        _placements.UpdateRotation(placementId, rotationDegrees, mirrored);
+        _placements.UpdateRotation(placementId, rotationDegrees, mirrored, _batchTransaction);
 
     /// <summary>
     /// Deletes a placement: any Connections touching one of its pins are deleted first (M7:
@@ -371,8 +435,8 @@ public sealed class ProjectSession : IDisposable
     public PlacementDeletionResult DeletePlacement(long placementId)
     {
         var (result, anyConnectionsDeleted) = DeletePlacementCore(placementId);
-        PlacementsChanged?.Invoke();
-        if (anyConnectionsDeleted) ConnectionsChanged?.Invoke();
+        RaisePlacementsChanged();
+        if (anyConnectionsDeleted) RaiseConnectionsChanged();
         return result;
     }
 
@@ -384,16 +448,18 @@ public sealed class ProjectSession : IDisposable
     /// contrast Connections, which are a derived fact of two placements' geometry and have no
     /// grid-delete at all (the Connections tab's Delete Selected was removed, not just guarded).
     /// Loops DeletePlacementCore (not the public DeletePlacement) so PlacementsChanged/
-    /// ConnectionsChanged each fire at most once for the whole batch, not once per placement.
+    /// ConnectionsChanged each fire at most once for the whole batch, not once per placement — and
+    /// wrapped in RunBatch so the whole cascade's writes are one transaction, not one fsync per
+    /// placement (the same fix applied to the canvas's own multi-select delete).
     /// </summary>
-    public void DeleteDeviceCascade(long deviceId)
+    public void DeleteDeviceCascade(long deviceId) => RunBatch(() =>
     {
         var placementIds = _placements.GetPlacementIdsForDevice(deviceId);
         var anyConnectionsDeleted = false;
 
         if (placementIds.Count == 0)
         {
-            _devices.DeleteDevice(deviceId);
+            _devices.DeleteDevice(deviceId, _batchTransaction);
         }
         else
         {
@@ -404,9 +470,21 @@ public sealed class ProjectSession : IDisposable
             }
         }
 
-        PlacementsChanged?.Invoke();
-        if (anyConnectionsDeleted) ConnectionsChanged?.Invoke();
-    }
+        RaisePlacementsChanged();
+        if (anyConnectionsDeleted) RaiseConnectionsChanged();
+    });
+
+    /// <summary>
+    /// Must be called BEFORE DeleteDeviceCascade for the same device ids — every page any of these
+    /// devices has a placement on. The Devices Navigator's cascade-delete has no geometry/canvas
+    /// awareness of its own (AutoConnectDetector deliberately takes pre-resolved positions, no
+    /// database knowledge), so this is what lets MainViewModel re-run auto-connect on whichever open
+    /// canvas tab(s) are affected once the cascade actually runs — that re-run scans the page's own
+    /// currently-empty pins itself (SchematicPageViewModel.GetUnconnectedPinIds), so this only needs
+    /// to identify which pages to target, not which specific pins.
+    /// </summary>
+    public IReadOnlyList<long> GetPageIdsForDevices(IReadOnlyList<long> deviceIds) =>
+        deviceIds.SelectMany(GetPlacementRefsForDevice).Select(r => r.PageId).Distinct().ToList();
 
     private (PlacementDeletionResult Result, bool AnyConnectionsDeleted) DeletePlacementCore(long placementId)
     {
@@ -422,16 +500,16 @@ public sealed class ProjectSession : IDisposable
         {
             foreach (var conn in _connections.GetConnectionsForDevicePin(pin.DevicePinId))
             {
-                _connections.DeleteConnection(conn.Id);
+                _connections.DeleteConnection(conn.Id, _batchTransaction);
                 anyConnectionsDeleted = true;
             }
         }
 
-        _placements.DeleteExclusiveDevicePinsForPlacement(placementId);
-        _placements.DeletePlacement(placementId);
+        _placements.DeleteExclusiveDevicePinsForPlacement(placementId, _batchTransaction);
+        _placements.DeletePlacement(placementId, _batchTransaction);
 
         var deviceDeleted = _placements.CountPlacementsForDevice(device.Id) == 0;
-        if (deviceDeleted) _devices.DeleteDevice(device.Id);
+        if (deviceDeleted) _devices.DeleteDevice(device.Id, _batchTransaction);
 
         var result = new PlacementDeletionResult(deviceDeleted, device.Id, device.DeviceTagSegment, device.FunctionSegment, device.LocationSegment, pinNames);
         return (result, anyConnectionsDeleted);
@@ -466,18 +544,18 @@ public sealed class ProjectSession : IDisposable
             FromDevicePinId = fromDevicePinId,
             ToDevicePinId = toDevicePinId,
         };
-        connection.Id = _connections.InsertConnection(connection);
-        _connections.InsertConnectionEnd(new ConnectionEnd { ConnectionId = connection.Id, End = Core.Enums.ConnectionEndDesignator.From });
-        _connections.InsertConnectionEnd(new ConnectionEnd { ConnectionId = connection.Id, End = Core.Enums.ConnectionEndDesignator.To });
+        connection.Id = _connections.InsertConnection(connection, _batchTransaction);
+        _connections.InsertConnectionEnd(new ConnectionEnd { ConnectionId = connection.Id, End = Core.Enums.ConnectionEndDesignator.From }, _batchTransaction);
+        _connections.InsertConnectionEnd(new ConnectionEnd { ConnectionId = connection.Id, End = Core.Enums.ConnectionEndDesignator.To }, _batchTransaction);
 
-        ConnectionsChanged?.Invoke();
+        RaiseConnectionsChanged();
         return connection;
     }
 
     public void DeleteConnection(long connectionId)
     {
-        _connections.DeleteConnection(connectionId);
-        ConnectionsChanged?.Invoke();
+        _connections.DeleteConnection(connectionId, _batchTransaction);
+        RaiseConnectionsChanged();
     }
 
     public IReadOnlyList<Connection> GetConnectionsForPage(long pageId) => _connections.GetConnectionsForPage(pageId);
@@ -739,6 +817,10 @@ public sealed class ProjectSession : IDisposable
     /// (project order) among a possibly-multi-placement device's placements.</summary>
     public SiblingPlacementRef? GetFirstPlacementForDevice(long deviceId) => _placements.GetFirstPlacementForDevice(deviceId);
 
+    /// <summary>Every placement of this Device across every page — the Devices/Interruption Points
+    /// Navigator's "highlight on canvas" target, unlike GetFirstPlacementForDevice's single result.</summary>
+    public IReadOnlyList<SiblingPlacementRef> GetPlacementRefsForDevice(long deviceId) => _placements.GetPlacementRefsForDevice(deviceId);
+
     public string SuggestNextDesignation(string? function, string? location) =>
         _devices.SuggestNextDesignation(CurrentProject.Id, function, location);
 
@@ -908,6 +990,10 @@ public sealed class ProjectSession : IDisposable
     }
 
     public IReadOnlyList<CableLine> GetCableLines(long pageId) => _cableLines.GetCableLinesForPage(pageId);
+
+    /// <summary>Every CableLine drawn for this Cable across every page — the Cables Navigator's
+    /// "highlight on canvas" target.</summary>
+    public IReadOnlyList<CableLine> GetCableLinesForCable(long cableId) => _cableLines.GetCableLinesForCable(cableId);
 
     public CableLine? GetCableLine(long cableLineId) => _cableLines.GetCableLine(cableLineId);
 

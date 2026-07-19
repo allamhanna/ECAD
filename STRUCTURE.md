@@ -17,6 +17,12 @@ electrical CAD/
       App.xaml.cs           global DispatcherUnhandledException handler (shows a message box; M14/
                              ADR-028 added a one-line reassurance that work up to the crash is already
                              saved, ahead of the raw exception text)
+      DevTools/StressTestGenerator.cs   M14/ADR-029: a kept dev tool (Developer > Generate Stress-Test
+                             Page), not a throwaway script — lays out ~300 Terminal placements in 20
+                             vertical chains, wires them via the same ProjectSession public API a real
+                             placement uses, adds ~140 definition points and ~25 cable lines; wrapped in
+                             ProjectSession.RunBatch (ADR-030) after its own first version took ~30s
+                             writing itself unbatched
       Canvas/                PlacementViewItem (mutable live-canvas placement: position/rotation/tag/
                              Function/Location/SiblingPageLabels/Pins + cached SKPicture), ConnectionViewItem
                              (M7: just a wire's three identity fields — ConnectionId/FromDevicePinId/
@@ -585,7 +591,16 @@ electrical CAD/
                              SaveAs (file copy + reopen on new path; M14/ADR-028 removed Checkpoint()
                              entirely as dead code — PRAGMA wal_checkpoint against a database never put
                              into WAL mode was always a silent no-op — so SaveAs's same-path case is now
-                             a true no-op and its real-copy case is a plain File.Copy),
+                             a true no-op and its real-copy case is a plain File.Copy); ADR-030 added
+                             RunBatch(Action) — an ambient _batchTransaction wrapping several writes in
+                             one SQLite transaction with deferred PlacementsChanged/ConnectionsChanged
+                             firing (RaisePlacementsChanged/RaiseConnectionsChanged check the ambient
+                             field) — MovePlacement/RotatePlacement/PlaceSymbol/DeletePlacement/
+                             DeleteDeviceCascade/CreateConnection/DeleteConnection all participate;
+                             GetPlacementRefsForDevice/GetCableLinesForCable (ADR-031) resolve every
+                             page an entity spans, for the Devices/Cables Navigators' highlight-sync;
+                             GetPageIdsForDevices (ADR-032) resolves which pages a cascade-delete
+                             touched, for auto-connect reconciliation on those pages,
                              Dispose — the testable core behind Ecad.App's MainViewModel; M6 added
                              PlaceSymbolOnExistingDevice, RenameDeviceTag, GetAllDevices,
                              SuggestNextDesignation, IsTagAvailable, a placement-level (not device-level)
@@ -738,7 +753,10 @@ electrical CAD/
                              "window select" rule (a placement must be entirely inside the rectangle),
                              which SchematicPageViewModel.FinishRubberBandSelection picks based on the
                              drag's own left-to-right vs. right-to-left screen direction
-      Canvas/UndoRedoStack.cs          generic IUndoableCommand push/undo/redo, no WPF/Ecad.Data dependency
+      Canvas/UndoRedoStack.cs          generic IUndoableCommand push/undo/redo, no WPF/Ecad.Data dependency;
+                             ADR-032 added Record(command) — pushes an already-executed command without
+                             re-running Do(), for folding auto-connect's side effects into the same undo
+                             step as the move/place/rotate/delete that triggered them
       Canvas/SchematicCanvasRenderer.cs  pure SkiaSharp draw: grid (rendered as dots since M10, not
                              lines — GridSpacing only ever moves where dots land/where SnapToGrid rounds
                              to, never an existing Placement's stored world position), wires (drawn
@@ -786,7 +804,12 @@ electrical CAD/
                              (AreFacingEachOther/AreOppositeDirections) plus pin-lands-mid-span-on-an-
                              existing-wire detection — see ADR-009 for why this isn't simple proximity
       Canvas/JunctionDetector.cs       M7: derives junction-dot points from the existing pairwise
-                             Connection records — no separate junction entity
+                             Connection records — no separate junction entity; ADR-029 rewrote the
+                             T-junction (point-lands-mid-span) check from an all-pairs scan (O(n²) in
+                             connection count — the M14 stress-test's dominant cost) to indexing routes
+                             by their axis-aligned segment's constant coordinate, so a candidate point
+                             only re-checks segments that could possibly contain it — same geometric
+                             test, ~2.8x faster at 285 connections, no behavior change
       Canvas/WireHitTester.cs          M7: proximity-based pin and wire (point-to-polyline) hit-testing;
                              M11/ADR-018 added HitTestWireForDefinitionPoint (nearest wire + a 0..1
                              length-fraction, via RouteMath.ProjectToT — used to snap a definition-point

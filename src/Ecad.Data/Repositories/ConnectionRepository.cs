@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using Ecad.Core.Enums;
 using Ecad.Core.Models;
@@ -7,7 +8,7 @@ namespace Ecad.Data.Repositories;
 
 public class ConnectionRepository(SqliteConnection connection)
 {
-    public long InsertConnection(Connection conn)
+    public long InsertConnection(Connection conn, IDbTransaction? transaction = null)
     {
         return connection.ExecuteScalar<long>(
             """
@@ -15,7 +16,7 @@ public class ConnectionRepository(SqliteConnection connection)
             VALUES (@FromDevicePinId, @ToDevicePinId, @WireNumber, @Color, @CrossSectionMm2, @LengthMm, @PartId, @CableId, @CableCoreId)
             RETURNING Id;
             """,
-            conn);
+            conn, transaction);
     }
 
     public Connection? GetConnection(long id)
@@ -24,9 +25,9 @@ public class ConnectionRepository(SqliteConnection connection)
     }
 
     /// <summary>Deletes just this Connection row; ConnectionEnd rows cascade.</summary>
-    public void DeleteConnection(long connectionId)
+    public void DeleteConnection(long connectionId, IDbTransaction? transaction = null)
     {
-        connection.Execute("DELETE FROM Connection WHERE Id = @connectionId;", new { connectionId });
+        connection.Execute("DELETE FROM Connection WHERE Id = @connectionId;", new { connectionId }, transaction);
     }
 
     /// <summary>Every Connection whose endpoints both resolve to a Placement on this page — the only
@@ -188,7 +189,7 @@ public class ConnectionRepository(SqliteConnection connection)
             new { projectId }).ToList();
     }
 
-    public long InsertConnectionEnd(ConnectionEnd end)
+    public long InsertConnectionEnd(ConnectionEnd end, IDbTransaction? transaction = null)
     {
         return connection.ExecuteScalar<long>(
             """
@@ -204,7 +205,8 @@ public class ConnectionRepository(SqliteConnection connection)
                 TerminationType = (int)end.TerminationType,
                 end.TerminationPartId,
                 end.StrippingLengthMm,
-            });
+            },
+            transaction);
     }
 
     public IReadOnlyList<ConnectionEnd> GetConnectionEnds(long connectionId)

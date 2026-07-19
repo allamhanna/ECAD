@@ -75,29 +75,38 @@
             </StackPanel>
         </Border>
 
-        <skia:SKElement x:Name="SkiaCanvas" Focusable="True" IgnorePixelScaling="True" AllowDrop="True"
-                         PaintSurface="OnPaintSurface"
-                         MouseDown="OnMouseDown"
-                         MouseMove="OnMouseMove"
-                         MouseUp="OnMouseUp"
-                         MouseWheel="OnMouseWheel"
-                         LostMouseCapture="OnLostMouseCapture"
-                         KeyDown="OnKeyDown"
-                         DragOver="OnCanvasDragOver"
-                         Drop="OnCanvasDrop">
-            <skia:SKElement.ContextMenu>
-                <!-- A ContextMenu is a separate popup, not part of the main visual tree, so it doesn't
-                     inherit SkiaCanvas's DataContext automatically — PlacementTarget re-establishes it.
-                     Right-click (OnMouseDown) already selected whatever's under the cursor by the time
-                     WPF opens this on the matching MouseUp, so these act on the right target. -->
-                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                    <MenuItem Header="Rotate" Command="{Binding RotateSelectionCommand}"/>
-                    <MenuItem Header="Delete" Command="{Binding DeleteSelectionCommand}"/>
-                    <Separator/>
-                    <MenuItem Header="Undo" Command="{Binding UndoCommand}"/>
-                    <MenuItem Header="Redo" Command="{Binding RedoCommand}"/>
-                </ContextMenu>
-            </skia:SKElement.ContextMenu>
-        </skia:SKElement>
+        <Grid>
+            <skia:SKElement x:Name="SkiaCanvas" Focusable="True" IgnorePixelScaling="True" AllowDrop="True"
+                             PaintSurface="OnPaintSurface"
+                             MouseDown="OnMouseDown"
+                             MouseMove="OnMouseMove"
+                             MouseUp="OnMouseUp"
+                             MouseWheel="OnMouseWheel"
+                             LostMouseCapture="OnLostMouseCapture"
+                             KeyDown="OnKeyDown"
+                             DragOver="OnCanvasDragOver"
+                             Drop="OnCanvasDrop">
+                <skia:SKElement.ContextMenu>
+                    <!-- A ContextMenu is a separate popup, not part of the main visual tree, so it doesn't
+                         inherit SkiaCanvas's DataContext automatically — PlacementTarget re-establishes it.
+                         Right-click (OnMouseDown) already selected whatever's under the cursor by the time
+                         WPF opens this on the matching MouseUp, so these act on the right target. -->
+                    <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                        <MenuItem Header="Rotate" Command="{Binding RotateSelectionCommand}"/>
+                        <MenuItem Header="Delete" Command="{Binding DeleteSelectionCommand}"/>
+                        <Separator/>
+                        <MenuItem Header="Undo" Command="{Binding UndoCommand}"/>
+                        <MenuItem Header="Redo" Command="{Binding RedoCommand}"/>
+                    </ContextMenu>
+                </skia:SKElement.ContextMenu>
+            </skia:SKElement>
+
+            <!-- M14 Part 3: permanent, low-cost frame-timing readout (see SchematicPageView.xaml.cs's
+                 OnPaintSurface and SchematicPageViewModel.RecordFrameTiming) — left on rather than
+                 instrumented-then-removed, so a future perf regression is visible without re-adding it. -->
+            <TextBlock Text="{Binding FrameDiagnosticsText}" IsHitTestVisible="False"
+                       Foreground="Gray" Opacity="0.6" FontSize="11"
+                       HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,6,4"/>
+        </Grid>
     </DockPanel>
 </UserControl>

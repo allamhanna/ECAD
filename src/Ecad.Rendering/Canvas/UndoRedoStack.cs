@@ -23,6 +23,17 @@ public sealed class UndoRedoStack
         _redoStack.Clear();
     }
 
+    /// <summary>Pushes a command that has ALREADY run (its Do() was already called by the caller)
+    /// onto the undo stack, without running it again — for composing a triggering action with
+    /// cascading side effects decided only after the triggering action's own Do() runs (e.g.
+    /// auto-connect's new/broken wires, which depend on the placement's post-move position) into one
+    /// atomic undo step, rather than pushing the triggering command and each side effect separately.</summary>
+    public void Record(IUndoableCommand command)
+    {
+        _undoStack.Push(command);
+        _redoStack.Clear();
+    }
+
     public void Undo()
     {
         if (_undoStack.Count == 0) return;

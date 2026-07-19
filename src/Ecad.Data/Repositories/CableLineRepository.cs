@@ -23,6 +23,12 @@ public class CableLineRepository(SqliteConnection connection)
     public IReadOnlyList<CableLine> GetCableLinesForPage(long pageId) =>
         connection.Query<CableLine>("SELECT * FROM CableLine WHERE PageId = @pageId ORDER BY Id;", new { pageId }).ToList();
 
+    /// <summary>Every CableLine drawn for this Cable, across every page — the Cables Navigator's
+    /// "highlight on canvas" target. CableLine already stores PageId/CableId directly, so no join is
+    /// needed the way GetPlacementRefsForDevice needs one for its PageNumberSegment label.</summary>
+    public IReadOnlyList<CableLine> GetCableLinesForCable(long cableId) =>
+        connection.Query<CableLine>("SELECT * FROM CableLine WHERE CableId = @cableId ORDER BY Id;", new { cableId }).ToList();
+
     public void UpdateGeometry(long id, double x1, double y1, double x2, double y2) =>
         connection.Execute("UPDATE CableLine SET X1 = @x1, Y1 = @y1, X2 = @x2, Y2 = @y2 WHERE Id = @id;", new { id, x1, y1, x2, y2 });
 

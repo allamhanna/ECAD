@@ -80,6 +80,9 @@
             <MenuItem Header="_Settings">
                 <MenuItem Header="_Preferences..." Command="{Binding OpenSettingsCommand}"/>
             </MenuItem>
+            <MenuItem Header="_Developer">
+                <MenuItem Header="_Generate Stress-Test Page" Command="{Binding GenerateStressTestPageCommand}"/>
+            </MenuItem>
         </Menu>
 
         <StatusBar DockPanel.Dock="Bottom">

@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.RegularExpressions;
 using Dapper;
 using Ecad.Core.Models;
@@ -7,7 +8,7 @@ namespace Ecad.Data.Repositories;
 
 public class DeviceRepository(SqliteConnection connection)
 {
-    public long InsertDevice(Device device)
+    public long InsertDevice(Device device, IDbTransaction? transaction = null)
     {
         return connection.ExecuteScalar<long>(
             """
@@ -15,7 +16,7 @@ public class DeviceRepository(SqliteConnection connection)
             VALUES (@ProjectId, @FunctionSegment, @LocationSegment, @DeviceTagSegment, @PartId)
             RETURNING Id;
             """,
-            device);
+            device, transaction);
     }
 
     public Device? GetDevice(long id)
@@ -23,7 +24,7 @@ public class DeviceRepository(SqliteConnection connection)
         return connection.QuerySingleOrDefault<Device>("SELECT * FROM Device WHERE Id = @id;", new { id });
     }
 
-    public long InsertDevicePin(DevicePin pin)
+    public long InsertDevicePin(DevicePin pin, IDbTransaction? transaction = null)
     {
         return connection.ExecuteScalar<long>(
             """
@@ -31,7 +32,7 @@ public class DeviceRepository(SqliteConnection connection)
             VALUES (@DeviceId, @Name, @Function, @TechnicalData)
             RETURNING Id;
             """,
-            pin);
+            pin, transaction);
     }
 
     public IReadOnlyList<DevicePin> GetDevicePins(long deviceId)
@@ -54,9 +55,9 @@ public class DeviceRepository(SqliteConnection connection)
 
     /// <summary>Deletes the Device row; DevicePin/Placement/PlacementPin all cascade per the M1 schema.
     /// Callers (ProjectSession.DeletePlacement, M6) only call this once a Device has no Placements left.</summary>
-    public void DeleteDevice(long deviceId)
+    public void DeleteDevice(long deviceId, IDbTransaction? transaction = null)
     {
-        connection.Execute("DELETE FROM Device WHERE Id = @deviceId;", new { deviceId });
+        connection.Execute("DELETE FROM Device WHERE Id = @deviceId;", new { deviceId }, transaction);
     }
 
     public void UpdateDeviceTag(long deviceId, string? function, string? location, string deviceTag)

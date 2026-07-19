@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -57,9 +58,20 @@ public partial class SchematicPageView : UserControl
     {
         if (DataContext is not SchematicPageViewModel viewModel) return;
         viewModel.ApplyPendingCenter(e.Info.Width, e.Info.Height);
+
+        var rebuildStopwatch = Stopwatch.StartNew();
+        var renderList = viewModel.BuildRenderList();
+        var selectedIds = viewModel.GetEffectiveSelectedPlacementIds();
+        var wiringRenderInfo = viewModel.BuildWiringRenderInfo();
+        var rubberBandRenderInfo = viewModel.BuildRubberBandRenderInfo();
+        rebuildStopwatch.Stop();
+
+        var renderStopwatch = Stopwatch.StartNew();
         SchematicCanvasRenderer.Render(e.Surface.Canvas, viewModel.Viewport, e.Info.Width, e.Info.Height,
-            viewModel.BuildRenderList(), viewModel.GetEffectiveSelectedPlacementIds(), viewModel.BuildWiringRenderInfo(),
-            viewModel.BuildRubberBandRenderInfo(), viewModel.WireColor);
+            renderList, selectedIds, wiringRenderInfo, rubberBandRenderInfo, viewModel.WireColor);
+        renderStopwatch.Stop();
+
+        viewModel.RecordFrameTiming(rebuildStopwatch.Elapsed.TotalMilliseconds, renderStopwatch.Elapsed.TotalMilliseconds);
     }
 
     private void OnMouseDown(object sender, MouseButtonEventArgs e)

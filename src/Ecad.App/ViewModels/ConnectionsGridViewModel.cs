@@ -55,6 +55,19 @@ public sealed partial class ConnectionsGridViewModel : ObservableObject
     /// marker, when attached) is more meaningful to land on than a bare endpoint placement.</summary>
     public event Action<long, long, long?>? NavigateToPageRequested;
 
+    /// <summary>Two-way canvas↔navigator highlight sync (see DevicesGridViewModel.HighlightedDevice) —
+    /// resolves to the Connection's DefinitionPoint on canvas if it has one (ADR-015: a Connection has
+    /// no independent canvas identity otherwise).</summary>
+    [ObservableProperty]
+    private Connection? _highlightedConnection;
+
+    public event Action<long>? ConnectionHighlightRequested;
+
+    partial void OnHighlightedConnectionChanged(Connection? value)
+    {
+        if (value is not null) ConnectionHighlightRequested?.Invoke(value.Id);
+    }
+
     public ConnectionsGridViewModel(ProjectSession session)
     {
         _session = session;

@@ -17,6 +17,7 @@
 
         <DataGrid x:Name="Grid" ItemsSource="{Binding FilteredRows}" AutoGenerateColumns="False" CanUserAddRows="False"
                   IsReadOnly="True" SelectionMode="Extended" SelectionUnit="FullRow"
+                  SelectedItem="{Binding HighlightedTermination, Mode=TwoWay}"
                   SelectionChanged="OnSelectionChanged" MouseDoubleClick="OnMouseDoubleClick"
                   PreviewMouseRightButtonDown="OnPreviewRightButtonDown">
             <DataGrid.Columns>
